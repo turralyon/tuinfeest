@@ -194,29 +194,33 @@ app.get('/', async (req, res) => {
             }
 
             function render() {
-                const cont = document.getElementById('tinderContainer');
-                if (idx >= tracks.length - 2) load();
-                const t = tracks[idx];
-                if (!t) { 
-                    cont.innerHTML = '<p style="text-align:center; padding-top:50px;">Laden...</p>'; 
-                    return; 
-                }
+const cont = document.getElementById('tinderContainer');
+    if (idx >= tracks.length - 2) load();
+    const t = tracks[idx];
+    if (!t) { 
+        cont.innerHTML = '<p style="text-align:center; padding-top:50px;">Laden...</p>'; 
+        return; 
+    }
                 
 
                 cont.innerHTML = \`
-                    <div class="track-card" id="card">
-                        <div class="stamp stamp-like">LIKE</div>
-                        <div class="stamp stamp-nope">NOPE</div>
-                        <iframe 
-                            src="https://open.spotify.com/embed/track/\${t.id}" 
-                            width="100%" 
-                            height="380" 
-                            frameborder="0" 
-                            allowtransparency="true" 
-                            allow="encrypted-media; clipboard-write; picture-in-picture"
-                        ></iframe>
-                        <div class="swipe-zone"></div>
-                    </div>
+<div class="track-card" id="card">
+            <div class="stamp stamp-like">LIKE</div>
+            <div class="stamp stamp-nope">NOPE</div>
+            
+            <iframe 
+                src="https://open.spotify.com/embed/track/${t.id}?utm_source=generator&theme=0" 
+                width="100%" 
+                height="380" 
+                frameborder="0" 
+                allowtransparency="true" 
+                allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+                loading="lazy"
+                style="border-radius: 20px;"
+            ></iframe>
+
+            <div class="swipe-zone"></div>
+        </div>
                 \`;
                 
                 const el = document.getElementById('card');
