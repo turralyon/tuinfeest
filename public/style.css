@@ -1,128 +1,151 @@
-@import url('https://fonts.googleapis.com/css2?family=Dancing+Script:wght@700&family=Bebas+Neue&display=swap');
-
+/* Algemene instellingen */
 body {
-    background-image: url('cocktail-pattern.png'); 
-    background-size: cover;
-    background-attachment: fixed;
-    background-position: center;
-    font-family: 'Dancing Script', cursive;
     margin: 0;
-    min-height: 100vh;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background-color: #121212;
+    color: white;
+    overflow-x: hidden;
 }
 
 header {
-    display: grid;
-    grid-template-columns: 80px 1fr 80px;
+    display: flex;
+    justify-content: space-between;
     align-items: center;
     padding: 15px 20px;
+    background: #1DB954;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.5);
 }
 
-header h1 {
-    grid-column: 2;
-    margin: 0;
-    font-family: 'Bebas Neue', sans-serif;
-    font-size: 1.8rem;
-    color: #9bd078;
+header h1 { margin: 0; font-size: 1.5rem; font-family: 'Bebas Neue', sans-serif; }
+
+/* Login Container & Shake */
+.login-container {
+    display: flex;
+    justify-content: center;
+    padding-top: 50px;
+}
+
+.login-card {
+    background: #222;
+    padding: 30px;
+    border-radius: 20px;
     text-align: center;
-    text-shadow: 2px 2px 4px rgba(0,0,0,0.7);
+    width: 280px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
 }
 
-.status-bar {
-    display: table;
-    margin: 15px auto;
-    color: #444;
-    padding: 10px 25px;
-    background: rgba(255, 255, 255, 0.85);
-    border-radius: 50px;
-    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+.login-card input {
+    width: 100%;
+    padding: 12px;
+    margin: 10px 0;
+    border-radius: 8px;
+    border: none;
+    background: #333;
+    color: white;
+    box-sizing: border-box;
+}
+
+.btn-start {
+    background: #1DB954;
+    border: none;
+    color: white;
+    padding: 12px 30px;
+    border-radius: 25px;
     font-weight: bold;
+    cursor: pointer;
+    width: 100%;
+    margin-top: 10px;
 }
 
-.tinder-container { 
+/* De Shake Animatie */
+.shake {
+    animation: shake 0.4s cubic-bezier(.36,.07,.19,.97) both;
+}
+
+@keyframes shake {
+    10%, 90% { transform: translate3d(-1px, 0, 0); }
+    20%, 80% { transform: translate3d(2px, 0, 0); }
+    30%, 50%, 70% { transform: translate3d(-4px, 0, 0); }
+    40%, 60% { transform: translate3d(4px, 0, 0); }
+}
+
+/* Swipe Omgeving */
+.tinder-container {
     position: relative;
-    width: 90vw;
-    max-width: 400px; 
-    height: 380px;
-    margin: 10px auto; 
+    height: 480px;
+    width: 100%;
+    margin-top: 20px;
 }
 
 .track-card {
     position: absolute;
-    background: white;
+    width: 90%;
+    max-width: 350px;
+    left: 50%;
+    top: 0;
+    transform: translateX(-50%);
+    background: #222;
     border-radius: 20px;
-    height: 352px;
-    width: 100%;
-    box-shadow: 0 10px 30px rgba(0,0,0,0.15);
     overflow: hidden;
+    box-shadow: 0 15px 35px rgba(0,0,0,0.5);
+    transition: background 0.15s ease;
 }
 
-.login-card {
-    padding: 30px;
-    box-sizing: border-box;
-    text-align: center;
+/* Stempels */
+.stamp {
+    position: absolute;
+    top: 50px;
+    padding: 5px 20px;
+    border: 6px solid;
+    border-radius: 10px;
+    font-size: 3rem;
+    font-weight: 900;
+    opacity: 0;
+    z-index: 120;
+    pointer-events: none;
+    font-family: 'Arial Black', sans-serif;
 }
 
-.shake { animation: shake 0.4s ease-in-out; }
-@keyframes shake {
-    0%, 100% { transform: translateX(0); }
-    25% { transform: translateX(-10px); }
-    50% { transform: translateX(10px); }
-    75% { transform: translateX(-10px); }
+.stamp-like {
+    right: 30px;
+    color: #1DB954;
+    border-color: #1DB954;
+    transform: rotate(-20deg);
+}
+
+.stamp-nope {
+    left: 30px;
+    color: #ff6b6b;
+    border-color: #ff6b6b;
+    transform: rotate(20deg);
 }
 
 .swipe-zone {
     position: absolute;
-    top: 0; left: 0; width: 100%; height: 260px;
-    z-index: 100;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 110;
 }
 
+/* Controls */
 .controls {
     display: flex;
     justify-content: center;
     gap: 30px;
-    margin-top: 10px;
+    margin-top: 30px;
 }
 
 .circle-btn {
-    width: 65px; height: 65px;
+    width: 60px;
+    height: 60px;
     border-radius: 50%;
     border: none;
-    font-size: 1.8rem;
+    font-size: 1.5rem;
     cursor: pointer;
-    box-shadow: 0 4px 15px rgba(0,0,0,0.2);
-    transition: transform 0.1s;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    box-shadow: 0 5px 15px rgba(0,0,0,0.3);
 }
 
-.btn-nope { background: white; color: #ff6b6b; }
+.btn-nope { background: #ff6b6b; color: white; }
 .btn-like { background: #1DB954; color: white; }
-.circle-btn:active { transform: scale(0.9); }
-
-input {
-    width: 100%; padding: 12px; margin-bottom: 12px;
-    border-radius: 10px; border: 1px solid #ddd;
-    font-family: sans-serif; box-sizing: border-box;
-}
-
-.btn-start {
-    background: #1DB954; color: white; border: none;
-    padding: 12px; border-radius: 25px; width: 100%;
-    font-family: 'Bebas Neue', sans-serif; font-size: 1.3rem; cursor: pointer;
-}
-
-.admin-link { color: #ff6b6b; font-weight: bold; text-decoration: none; font-size: 0.8rem; margin-right: 10px; }
-.logout-link { font-size: 0.8rem; color: #333; text-decoration: none; background: rgba(255,255,255,0.7); padding: 5px 10px; border-radius: 10px; }
-
-/* Admin Styling */
-.admin-panel { background: #1a1a1a; color: white; font-family: sans-serif; padding: 20px; }
-.dashboard-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
-.admin-section { background: rgba(255,255,255,0.1); padding: 15px; border-radius: 15px; }
-.history-scroll { max-height: 350px; overflow-y: auto; }
-.playlist-item { display: flex; gap: 10px; align-items: center; padding: 8px; border-bottom: 1px solid #333; font-size: 0.9rem; }
-.playlist-item b { color: #1DB954; }
-.entry-like { border-left: 4px solid #1DB954; background: rgba(29, 185, 84, 0.1); padding: 8px; margin: 4px 0; display: flex; justify-content: space-between; align-items: center;}
-.entry-nope { border-left: 4px solid #ff6b6b; background: rgba(255, 107, 107, 0.1); padding: 8px; margin: 4px 0; display: flex; justify-content: space-between; align-items: center;}
-.btn-restore { background: #444; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; }
-.btn-ban { background: #ff6b6b; color: white; border: none; padding: 10px; border-radius: 20px; width: 100%; cursor: pointer; font-weight: bold; }
