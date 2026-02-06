@@ -173,23 +173,37 @@ header h1 { margin: 0; font-size: 1.5rem; font-family: 'Bebas Neue', sans-serif;
 
 .btn-nope { background: #ff6b6b; color: white; }
 .btn-like { background: #1DB954; color: white; }
-<<<<<<< HEAD
 
 /* Admin Segmenten */
 .admin-container { max-width: 1000px; margin: 20px auto; padding: 0 15px; }
 .admin-segment { 
     background: white; 
     border-radius: 20px; 
-    padding: 20px; 
+    padding: 25px; 
     margin-bottom: 30px; 
-    box-shadow: 0 10px 25px rgba(0,0,0,0.05);
+    box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+    color: #333; /* Zorg dat tekst standaard donker is */
 }
-.admin-segment h3 { font-family: 'Bebas Neue'; font-size: 2rem; color: #1DB954; border-bottom: 2px solid #eee; padding-bottom: 10px; margin-top: 0; }
-
+.admin-segment h3 { 
+    font-family: 'Bebas Neue'; 
+    font-size: 2.2rem; 
+    color: #1DB954; /* De gevraagde groen */
+    border-bottom: 3px solid #f0f2f5; 
+    padding-bottom: 10px; 
+    margin-top: 0; 
+   margin-bottom: 20px;
+}
 /* Segment 1: Users */
-.user-row { border-bottom: 1px solid #eee; padding: 10px 0; cursor: pointer; }
-.user-details { display: none; background: #f9f9f9; padding: 10px; border-radius: 10px; margin-top: 5px; font-size: 0.9rem; }
-
+.user-row b { color: #1DB954; font-size: 1.1rem; }
+.user-details { 
+    display: none; 
+    background: #fdfdfd; 
+    padding: 15px; 
+    border-radius: 12px; 
+    margin-top: 10px; 
+    font-size: 0.9rem; 
+    border: 1px solid #eee;
+}
 /* Segment 2, 3, 4: Lijsten */
 .item-list { display: flex; flex-direction: column; gap: 8px; }
 .list-item { 
