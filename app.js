@@ -129,31 +129,91 @@ app.get('/admin', async (req, res) => {
         const usersRes = await db.query('SELECT * FROM users WHERE username != $1', ['admin']);
         const historyRes = await db.query('SELECT * FROM history ORDER BY created_at DESC');
         
-        const stats = {};
-        usersRes.rows.forEach(u => { stats[u.username] = { like: 0, nope: 0 }; });
-        historyRes.rows.forEach(h => {
-            if (stats[h.username] && (h.action === 'like' || h.action === 'nope')) {
-                stats[h.username][h.action]++;
+        const users = usersRes.rows;
+        const history = historyRes.rows;
+
+        // Statistieken en acties per user groeperen
+        const userStats = {};
+        users.forEach(u => { 
+            userStats[u.username] = { 
+                like: 0, 
+                nope: 0, 
+                actions: history.filter(h => h.username === u.username) 
+            }; 
+        });
+
+        history.forEach(h => {
+            if (userStats[h.username] && (h.action === 'like' || h.action === 'nope')) {
+                userStats[h.username][h.action]++;
             }
         });
 
-        res.send(`<!DOCTYPE html><html><head><link rel="stylesheet" href="/style.css"><title>Admin</title></head>
+        res.send(`
+        <!DOCTYPE html><html><head>
+            <link rel="stylesheet" href="/style.css">
+            <title>Admin Dashboard</title>
+            <style>
+                .user-details { display: none; margin-top: 10px; font-size: 0.8rem; background: rgba(0,0,0,0.2); padding: 10px; border-radius: 5px; }
+                .stat-card { cursor: pointer; transition: 0.2s; border: 1px solid rgba(255,255,255,0.1); margin-bottom: 10px; padding: 15px; border-radius: 12px; }
+                .stat-card:hover { background: rgba(255,255,255,0.1); }
+                .action-row { border-bottom: 1px solid rgba(255,255,255,0.05); padding: 3px 0; display: flex; justify-content: space-between; }
+                .act-like { color: #1DB954; }
+                .act-nope { color: #ff6b6b; }
+            </style>
+        </head>
         <body class="admin-panel">
-            <h1 style="text-align:center; font-family:'Bebas Neue'">Admin Dashboard</h1>
-            <div class="status-bar" style="text-align:center">Playlist: <b>${formatDuration(totalMs)}</b></div>
+            <div class="admin-header" style="text-align:center; padding:20px">
+                <h1 style="font-family:'Bebas Neue'">Admin Dashboard</h1>
+                <div class="status-bar" style="background:rgba(255,255,255,0.9); display:inline-block">Playlist: <b>${formatDuration(totalMs)}</b></div>
+                <br><a href="/" style="color: #9bd078; text-decoration:none">← terug naar Swipe</a>
+            </div>
+
             <div class="dashboard-grid" style="display:grid; grid-template-columns: 1fr 1fr; gap:20px; padding:20px">
                 <section class="admin-section">
-                    <h3>Leaderboard</h3>
-                    ${Object.keys(stats).map(name => `<div class="stat-card"><b>${name}</b>: ❤ ${stats[name].like} | ✖ ${stats[name].nope}</div>`).join('')}
+                    <h3>Wie swiped wat? (Klik voor details)</h3>
+                    <div id="leaderboard">
+                        ${Object.keys(userStats).map(name => `
+                            <div class="stat-card" onclick="toggleUser('${name}')">
+                                <div style="display:flex; justify-content:space-between; align-items:center">
+                                    <strong style="font-size:1.2rem; color:#9bd078">${name}</strong>
+                                    <span>❤ ${userStats[name].like} | ✖ ${userStats[name].nope}</span>
+                                </div>
+                                <div id="details-${name}" class="user-details">
+                                    <strong>Recente stemmen:</strong><br>
+                                    ${userStats[name].actions.length > 0 ? userStats[name].actions.slice(0, 20).map(a => `
+                                        <div class="action-row">
+                                            <span>${a.track_name} - <small>${a.artist_name}</small></span>
+                                            <span class="${a.action === 'like' ? 'act-like' : 'act-nope'}">${a.action === 'like' ? '❤' : '✖'}</span>
+                                        </div>
+                                    `).join('') : 'Nog geen stemmen uitgebracht.'}
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
                 </section>
+
                 <section class="admin-section">
-                    <h3>Playlist (${tracks.length})</h3>
-                    <div class="history-scroll" style="max-height:300px; overflow-y:auto">
-                        ${tracks.map(i => `<div class="playlist-item">🎵 ${i.track.name} - ${i.track.artists[0].name}</div>`).join('')}
+                    <h3>Gekozen Nummers (${tracks.length})</h3>
+                    <div class="history-scroll" style="max-height:600px; overflow-y:auto">
+                        ${tracks.map(i => `
+                            <div class="playlist-item" style="display:flex; align-items:center; gap:10px; margin-bottom:8px">
+                                <img src="${i.track.album.images[2]?.url}" width="35" style="border-radius:3px">
+                                <div>
+                                    <b style="font-size:0.9rem">${i.track.name}</b><br>
+                                    <small style="opacity:0.7">${i.track.artists[0].name}</small>
+                                </div>
+                            </div>
+                        `).join('')}
                     </div>
                 </section>
             </div>
-            <p style="text-align:center"><a href="/" style="color:white">Terug naar Swipe</a></p>
+
+            <script>
+                function toggleUser(name) {
+                    const el = document.getElementById('details-' + name);
+                    el.style.display = (el.style.display === 'block') ? 'none' : 'block';
+                }
+            </script>
         </body></html>`);
     } catch (e) { res.send("Error: " + e.message); }
 });
