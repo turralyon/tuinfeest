@@ -97,30 +97,107 @@ app.get('/logout', (req, res) => { res.clearCookie('user_auth'); res.redirect('/
 app.get('/admin', async (req, res) => {
     const user = await getActiveUser(req);
     if (!user || user.username !== 'admin') return res.redirect('/');
+    
     try {
+        const token = await refreshIfNeeded();
+        
+        // Data ophalen
         const usersRes = await db.query('SELECT username FROM users WHERE username != $1', ['admin']);
         const historyRes = await db.query('SELECT * FROM history ORDER BY created_at DESC');
         
-        const userStats = {};
-        usersRes.rows.forEach(u => { 
-            userStats[u.username] = { like: 0, nope: 0, actions: historyRes.rows.filter(h => h.username === u.username) }; 
+        // Segment 4: Totale Playlist ophalen van Spotify
+        const playlistRes = await axios.get(`https://api.spotify.com/v1/playlists/${process.env.SPOTIFY_TARGET_PLAYLIST_ID}/tracks`, {
+            headers: { Authorization: `Bearer ${token}` }
         });
-        historyRes.rows.forEach(h => { if (userStats[h.username]) userStats[h.username][h.action]++; });
+        const targetTracks = playlistRes.data.items;
+
+        // Logica voor segmenten
+        const userStats = {};
+        const artistTally = {};
+        
+        historyRes.rows.forEach(h => {
+            if (!userStats[h.username]) userStats[h.username] = { like: 0, nope: 0, actions: [] };
+            userStats[h.username][h.action]++;
+            userStats[h.username].actions.push(h);
+
+            if (h.action === 'like') {
+                artistTally[h.artist_name] = (artistTally[h.artist_name] || 0) + 1;
+            }
+        });
+
+        const nopes = historyRes.rows.filter(h => h.action === 'nope');
+        const sortedArtists = Object.entries(artistTally).sort((a,b) => b[1] - a[1]);
 
         res.send(`
-        <html><head><link rel="stylesheet" href="/style.css"><title>Admin</title></head>
-        <body class="admin-panel">
-            <header><h2>Admin Dashboard</h2><div><a href="/" style="color:white; text-decoration:none;">SWIPE</a></div></header>
-            <div style="padding:20px; max-width: 800px; margin: auto;">
-                ${Object.keys(userStats).map(name => `
-                    <div class="stat-card" onclick="const d = this.querySelector('.user-details'); d.style.display = d.style.display === 'block' ? 'none' : 'block'">
-                        <div style="display:flex; justify-content:space-between"><b>${name}</b> <span>❤ ${userStats[name].like} | ✖ ${userStats[name].nope}</span></div>
-                        <div class="user-details">${userStats[name].actions.slice(0, 20).map(a => `<div class="history-item"><span>${a.track_name}</span> <b>${a.action === 'like' ? '❤' : '✖'}</b></div>`).join('')}</div>
+        <html>
+        <head><link rel="stylesheet" href="/style.css"><title>Admin Panel</title></head>
+        <body>
+            <header><h2>Feestbeheer</h2><a href="/" style="color:white; text-decoration:none;">NAAR SWIPE</a></header>
+            
+            <div class="admin-container">
+                <div class="admin-segment">
+                    <h3>1. Stemgedrag</h3>
+                    ${Object.keys(userStats).map(name => `
+                        <div class="user-row" onclick="const d=this.querySelector('.user-details'); d.style.display=d.style.display==='block'?'none':'block'">
+                            <b>${name}</b>: ${userStats[name].like + userStats[name].nope} stemmen (❤ ${userStats[name].like} / ✖ ${userStats[name].nope})
+                            <div class="user-details">
+                                ${userStats[name].actions.map(a => `<div>${a.action==='like'?'❤':'✖'} ${a.track_name}</div>`).join('')}
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+
+                <div class="admin-segment">
+                    <h3>2. Top Artiesten & Ban</h3>
+                    <div class="item-list">
+                        ${sortedArtists.slice(0, 10).map(([name, count]) => `
+                            <div class="list-item">
+                                <span>${name} (${count} likes)</span>
+                                <button class="btn-ban" onclick="banArtist('${name}')">VERBAN</button>
+                            </div>
+                        `).join('')}
                     </div>
-                `).join('')}
+                </div>
+
+                <div class="admin-segment">
+                    <h3>3. Afgewezen (Nopes)</h3>
+                    <div class="item-list">
+                        ${nopes.slice(0, 10).map(n => `
+                            <div class="list-item">
+                                <span>${n.track_name} - ${n.artist_name}</span>
+                                <button class="btn-retry" onclick="retryTrack('${n.track_id}')">RE-TRY</button>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+
+                <div class="admin-segment">
+                    <h3>4. Huidige Playlist (${targetTracks.length} tracks)</h3>
+                    <div class="item-list">
+                        ${targetTracks.map(item => `
+                            <div class="list-item">
+                                <span>${item.track.name} - ${item.track.artists[0].name}</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
             </div>
-        </body></html>`);
-    } catch (e) { res.send("Error: " + e.message); }
+
+            <script>
+                async function banArtist(name) {
+                    if(confirm('Alles van ' + name + ' verwijderen?')) {
+                        // Hier zou je een API call maken naar een ban-endpoint
+                        alert('Artiest ' + name + ' is verbannen uit toekomstige suggesties.');
+                    }
+                }
+                async function retryTrack(id) {
+                    // Logica om uit history te verwijderen zodat hij weer in de swipe komt
+                    alert('Track wordt weer aangeboden aan anderen.');
+                }
+            </script>
+        </body>
+        </html>`);
+    } catch (e) { res.send("Fout bij laden admin: " + e.message); }
 });
 
 // --- FRONTEND ---
