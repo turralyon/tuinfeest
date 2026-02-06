@@ -1,3 +1,5 @@
+/* Update de import bovenin je style.css */
+@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Dancing+Script:wght@700&display=swap');
 /* Algemene instellingen */
 body {
     margin: 0;
@@ -19,6 +21,22 @@ header {
 header h1 { margin: 0; font-size: 1.5rem; font-family: 'Bebas Neue', sans-serif; }
 
 /* Login Container & Shake */
+.login-header-main {
+    font-family: 'Dancing Script', cursive;
+    font-size: 2.5rem;
+    color: #333;
+    margin-bottom: 0;
+    line-height: 1;
+}
+
+.login-header-sub {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 4rem;
+    color: #fe8777; /* De gevraagde koraal/roze kleur */
+    margin-top: -10px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+}
 .login-container {
     display: flex;
     justify-content: center;
@@ -26,12 +44,14 @@ header h1 { margin: 0; font-size: 1.5rem; font-family: 'Bebas Neue', sans-serif;
 }
 
 .login-card {
-    background: #222;
-    padding: 30px;
-    border-radius: 20px;
+    background: white;
+    padding: 40px 30px;
+    border-radius: 30px;
+    width: 320px; /* Iets breder gemaakt */
+    margin: 60px auto;
     text-align: center;
-    width: 280px;
-    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    box-shadow: 0 20px 40px rgba(0,0,0,0.15);
+}
 }
 
 .login-card input {
@@ -45,6 +65,7 @@ header h1 { margin: 0; font-size: 1.5rem; font-family: 'Bebas Neue', sans-serif;
     box-sizing: border-box;
 }
 
+
 .btn-start {
     background: #1DB954;
     border: none;
@@ -56,6 +77,8 @@ header h1 { margin: 0; font-size: 1.5rem; font-family: 'Bebas Neue', sans-serif;
     width: 100%;
     margin-top: 10px;
 }
+
+
 
 /* De Shake Animatie */
 .shake {
