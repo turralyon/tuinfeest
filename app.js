@@ -209,7 +209,7 @@ const cont = document.getElementById('tinderContainer');
             <div class="stamp stamp-nope">NOPE</div>
             
             <iframe 
-                src="https://open.spotify.com/embed/track/${t.id}?utm_source=generator&theme=0" 
+                src="https://open.spotify.com/embed/track/\${t.id}?utm_source=generator&theme=0"
                 width="100%" 
                 height="380" 
                 frameborder="0" 
