@@ -7,6 +7,7 @@ body {
     background-color: #121212;
     color: white;
     overflow-x: hidden;
+    background: #f0f2f5 url('/cocktail-pattern.png') repeat;
 }
 
 header {
@@ -172,6 +173,7 @@ header h1 { margin: 0; font-size: 1.5rem; font-family: 'Bebas Neue', sans-serif;
 
 .btn-nope { background: #ff6b6b; color: white; }
 .btn-like { background: #1DB954; color: white; }
+<<<<<<< HEAD
 
 /* Admin Segmenten */
 .admin-container { max-width: 1000px; margin: 20px auto; padding: 0 15px; }
@@ -196,3 +198,4 @@ header h1 { margin: 0; font-size: 1.5rem; font-family: 'Bebas Neue', sans-serif;
 }
 .btn-ban { background: #ff6b6b; color: white; border: none; padding: 5px 10px; border-radius: 5px; cursor: pointer; font-size: 0.8rem; }
 .btn-retry { background: #1DB954; color: white; border: none; padding: 5px 10px; border-radius: 5px; cursor: pointer; font-size: 0.8rem; }
+
