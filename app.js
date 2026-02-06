@@ -202,7 +202,7 @@ app.get('/', async (req, res) => {
                     return; 
                 }
                 
-                // FIX 4: Backticks gefixt (dubbele \\\\ → normale `)
+
                 cont.innerHTML = \`
                     <div class="track-card" id="card">
                         <div class="stamp stamp-like">LIKE</div>
