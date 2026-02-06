@@ -193,90 +193,53 @@ app.get('/', async (req, res) => {
                 }
             }
 
-            function render() {
-const cont = document.getElementById('tinderContainer');
-    if (idx >= tracks.length - 2) load();
-    const t = tracks[idx];
-    if (!t) { 
-        cont.innerHTML = '<p style="text-align:center; padding-top:50px;">Laden...</p>'; 
-        return; 
-    }
-                
+                function renderCard() {
+                    if(currentIndex >= trackList.length) { loadTracks(); return; }
+                    const t = trackList[currentIndex];
+                    const container = document.getElementById('tinderContainer');
+                    
+                    // Gebruik concatenatie om backtick-fouten te voorkomen
+                    container.innerHTML = '<div class="track-card" id="activeCard">' +
+                        '<iframe src="https://open.spotify.com/embed/track/' + t.id + '" ' +
+                        'width="100%" height="352" frameborder="0" allow="encrypted-media"></iframe>' +
+                        '<div class="swipe-zone"></div>' +
+                        '</div>';
+                    setupHammer();
+                }
 
-                cont.innerHTML = \`
-<div class="track-card" id="card">
-            <div class="stamp stamp-like">LIKE</div>
-            <div class="stamp stamp-nope">NOPE</div>
-            
-            <iframe 
-                src="https://open.spotify.com/embed/track/\${t.id}?utm_source=generator&theme=0"
-                width="100%" 
-                height="380" 
-                frameborder="0" 
-                allowtransparency="true" 
-                allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
-                loading="lazy"
-                style="border-radius: 20px;"
-            ></iframe>
+                function setupHammer() {
+                    const el = document.getElementById('activeCard');
+                    if(!el) return;
+                    const hammer = new Hammer(el.querySelector('.swipe-zone'));
+                    hammer.on('pan', (ev) => {
+                        el.style.transition = 'none';
+                        el.style.transform = 'translate(' + ev.deltaX + 'px, ' + ev.deltaY + 'px) rotate(' + (ev.deltaX / 15) + 'deg)';
+                    });
+                    hammer.on('panend', (ev) => {
+                        el.style.transition = 'transform 0.3s ease-out';
+                        if (ev.deltaX > 140) handleSwipe('like');
+                        else if (ev.deltaX < -140) handleSwipe('nope');
+                        else el.style.transform = '';
+                    });
+                }
 
-            <div class="swipe-zone"></div>
-        </div>
-                \`;
-                
-                const el = document.getElementById('card');
-                const hammer = new Hammer(el.querySelector('.swipe-zone'));
-                const sL = el.querySelector('.stamp-like'); 
-                const sN = el.querySelector('.stamp-nope');
-
-                hammer.on('pan', (ev) => {
-                    const x = ev.deltaX; const op = Math.min(Math.abs(x) / 150, 1);
-                    el.style.transform = 'translateX(calc(-50% + ' + x + 'px)) rotate(' + (x/15) + 'deg)';
-                    if (x > 0) { 
-                        el.style.background = 'rgba(29, 185, 84,'+(op*0.3)+')'; 
-                        sL.style.opacity = op; 
-                        sN.style.opacity = 0; 
+                async function handleSwipe(action) {
+                    const t = trackList[currentIndex];
+                    const el = document.getElementById('activeCard');
+                    if(el) {
+                        el.style.transform = action === 'like' ? 'translate(500px, 0) rotate(30deg)' : 'translate(-500px, 0) rotate(-30deg)';
+                        el.style.opacity = '0';
                     }
-                    else { 
-                        el.style.background = 'rgba(255,107,107,'+(op*0.3)+')'; 
-                        sN.style.opacity = op; 
-                        sL.style.opacity = 0; 
-                    }
-                });
-
-                hammer.on('panend', (ev) => {
-                    if (Math.abs(ev.deltaX) > 150) forceSwipe(ev.deltaX > 0 ? 'right' : 'left');
-                    else { 
-                        el.style.transition = '0.3s'; 
-                        el.style.transform = 'translateX(-50%)'; 
-                        el.style.background = 'white'; 
-                        sL.style.opacity = 0; 
-                        sN.style.opacity = 0; 
-                        setTimeout(() => el.style.transition = '', 300); 
-                    }
-                });
-            }
-
-            function forceSwipe(dir) {
-                const el = document.getElementById('card'); 
-                if (!el) return;
-                el.style.transition = '0.4s ease-out';
-                el.style.transform = dir === 'right' ? 'translateX(250%) rotate(30deg)' : 'translateX(-250%) rotate(-30deg)';
-                const t = tracks[idx];
-                fetch('/api/interact', { 
-                    method: 'POST', 
-                    headers: {'Content-Type': 'application/json'}, 
-                    body: JSON.stringify({ 
-                        track_id: t.id, 
-                        action: dir==='right'?'like':'nope', 
-                        uri: t.uri, 
-                        track_name: t.name, 
-                        artist_name: t.artists[0].name 
-                    }) 
-                });
-                setTimeout(() => { idx++; render(); }, 350);
-            }
-            
-            if (document.getElementById('tinderContainer')) load();
+                    fetch('/api/interact', { 
+                        method: 'POST', 
+                        headers: {'Content-Type': 'application/json'}, 
+                        body: JSON.stringify({ track_id: t.id, action, uri: t.uri }) 
+                    });
+                    currentIndex++; 
+                    setTimeout(renderCard, 300);
+                }
+                loadTracks();
+            ` : ''}
         </script>
     </body>
     </html>
