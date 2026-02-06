@@ -144,14 +144,18 @@ header h1 { margin: 0; font-size: 1.5rem; font-family: 'Bebas Neue', sans-serif;
     transform: rotate(20deg);
 }
 
-.swipe-zone {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    z-index: 110;
+.swipe-zone { 
+    position: absolute; 
+    bottom: 0; /* Verplaatst naar de onderkant */
+    left: 0; 
+    width: 100%; 
+    height: 100px; /* Hoogte verkleind: nu kun je bovenin wel op play klikken! */
+    z-index: 100; 
+    cursor: grab;
+    background: rgba(255,255,255,0.01); /* Bijna onzichtbaar maar wel aanwezig */
 }
+
+.swipe-zone:active { cursor: grabbing; }
 
 /* Controls */
 .controls {

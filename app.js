@@ -273,9 +273,17 @@ app.get('/', async (req, res) => {
                 if (!t) { cont.innerHTML = '<p style="text-align:center; padding-top:50px;">Laden...</p>'; return; }
                 
                 cont.innerHTML = \`
-                    <div class="track-card" id="card">
-                        <div class="stamp stamp-like">LIKE</div><div class="stamp stamp-nope">NOPE</div>
-                        <iframe src="https://open.spotify.com/embed/track/\${t.id}" width="100%" height="380" frameborder="0" allow="encrypted-media"></iframe>
+<div class="track-card" id="card">
+                        <div class="stamp stamp-like">LIKE</div>
+                        <div class="stamp stamp-nope">NOPE</div>
+                        <iframe 
+                            src="https://open.spotify.com/embed/track/${t.id}" 
+                            width="100%" 
+                            height="380" 
+                            frameborder="0" 
+                            allowtransparency="true" 
+                            allow="encrypted-media; clipboard-write; picture-in-picture"
+                        ></iframe>
                         <div class="swipe-zone"></div>
                     </div>\`;
                 
