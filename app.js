@@ -93,9 +93,33 @@ app.post('/api/interact', async (req, res) => {
 app.post('/api/login', async (req, res) => {
     const { username, password } = req.body;
     try {
-        const result = await db.query('SELECT * FROM users WHERE username = $1 AND password = $2', [username, password]);
+        // 1. Zoek de gebruiker op naam
+        const result = await db.query('SELECT * FROM users WHERE username = $1', [username]);
         const user = result.rows[0];
-        if (user) {
+
+        if (!user) {
+            return res.json({ ok: false });
+        }
+
+        let isMatch = false;
+        const isAlreadyHashed = user.password.startsWith('$2b$');
+
+        if (!isAlreadyHashed) {
+            // 2. LAZY MIGRATION: Check plaintext
+            if (password === user.password) {
+                isMatch = true;
+                // Wachtwoord klopt, dus nu direct hashen voor de volgende keer!
+                const newHash = await bcrypt.hash(password, saltRounds);
+                await db.query('UPDATE users SET password = $1 WHERE id = $2', [newHash, user.id]);
+                console.log(`Wachtwoord voor ${username} is succesvol gemigreerd naar een hash.`);
+            }
+        } else {
+            // 3. STANDAARD: Check hash via bcrypt
+            isMatch = await bcrypt.compare(password, user.password);
+        }
+
+        // 4. Afhandeling van de login
+        if (isMatch) {
             const token = uuidv4();
             await db.query('UPDATE users SET token = $1 WHERE id = $2', [token, user.id]);
             res.cookie('user_auth', token, { signed: true, httpOnly: true, maxAge: 30 * 24 * 60 * 60 * 1000 });
@@ -103,7 +127,11 @@ app.post('/api/login', async (req, res) => {
         } else {
             res.json({ ok: false });
         }
-    } catch (e) { res.status(500).send(e.message); }
+
+    } catch (e) { 
+        console.error(e);
+        res.status(500).send("Server fout"); 
+    }
 });
 
 app.get('/logout', (req, res) => {
