@@ -15,6 +15,7 @@ app.use(express.json());
 app.use(cookieParser('feestje_geheim_123'));
 app.use(express.static('public'));
 
+// Helper om de huidige ingelogde gebruiker te vinden
 const getActiveUser = async (req) => {
     const userToken = req.signedCookies.user_auth;
     if (!userToken) return null;
@@ -26,16 +27,41 @@ const getActiveUser = async (req) => {
     }
 };
 
+// Helper om genres van een artiest op te halen via Spotify
+async function getArtistGenres(artistId, token) {
+    try {
+        const res = await axios.get(`https://api.spotify.com/v1/artists/${artistId}`, {
+            headers: { Authorization: `Bearer ${token}` }
+        });
+        return res.data.genres; // bijv. ["pop", "dance-pop"]
+    } catch (e) {
+        return [];
+    }
+}
+
+// API: Tracks ophalen met Genre-Algoritme
 app.get('/api/tracks', async (req, res) => {
     const user = await getActiveUser(req);
     if (!user) return res.status(401).send();
     try {
         const token = await refreshIfNeeded();
-        const historyRes = await db.query("SELECT track_id, action, artist_name, username FROM history WHERE (username = $1 OR track_id = 'BAN_ARTIST')", [user.username]);
+        
+        // Haal geschiedenis op inclusief genres voor het algoritme
+        const historyRes = await db.query("SELECT track_id, action, genres FROM history WHERE (username = $1 OR track_id = 'BAN_ARTIST')", [user.username]);
         const history = historyRes.rows || [];
+        
         const viewed = new Set(history.filter(h => h.username === user.username).map(h => h.track_id));
         const artistBans = new Set(history.filter(h => h.track_id === 'BAN_ARTIST').map(h => h.action.toLowerCase()));
-        const favoriteArtists = history.filter(h => h.action === 'like' && h.username === user.username).map(h => h.artist_name);
+        
+        // Tel welke genres de gebruiker vaak "liked"
+        const genreScores = {};
+        history.filter(h => h.action === 'like' && h.username === user.username).forEach(h => {
+            if (h.genres) {
+                h.genres.split(',').forEach(g => {
+                    genreScores[g] = (genreScores[g] || 0) + 1;
+                });
+            }
+        });
 
         const playlistInfo = await axios.get(`https://api.spotify.com/v1/playlists/${process.env.SPOTIFY_SOURCE_PLAYLIST_ID}?fields=tracks.total`, {
             headers: { Authorization: `Bearer ${token}` }
@@ -49,11 +75,17 @@ app.get('/api/tracks', async (req, res) => {
         });
 
         let candidates = resp.data.items.map(i => i.track).filter(t => t && t.id && !viewed.has(t.id) && !artistBans.has(t.artists[0].name.toLowerCase()));
-        
+
+        // Haal genres op voor de eerste 15 kandidaten om te kunnen sorteren
+        for (let track of candidates.slice(0, 15)) {
+            track.temp_genres = await getArtistGenres(track.artists[0].id, token);
+        }
+
+        // Sorteren: Geef een score op basis van hoeveel favoriete genres een track heeft
         candidates.sort((a, b) => {
-            const aIsFav = favoriteArtists.includes(a.artists[0].name) ? 1 : 0;
-            const bIsFav = favoriteArtists.includes(b.artists[0].name) ? 1 : 0;
-            return bIsFav - aIsFav;
+            const aScore = (a.temp_genres || []).reduce((acc, g) => acc + (genreScores[g] || 0), 0);
+            const bScore = (b.temp_genres || []).reduce((acc, g) => acc + (genreScores[g] || 0), 0);
+            return bScore - aScore;
         });
 
         res.json(candidates.slice(0, 10));
@@ -62,24 +94,35 @@ app.get('/api/tracks', async (req, res) => {
     }
 });
 
+// API: Interactie (Like/Nope)
 app.post('/api/interact', async (req, res) => {
     const user = await getActiveUser(req);
     if (!user) return res.status(401).send();
-    const { track_id, action, uri, track_name, artist_name } = req.body;
+    const { track_id, action, uri, track_name, artist_name, artist_id } = req.body;
+    
     try {
-        await db.query('INSERT INTO history (username, track_id, action, track_name, artist_name) VALUES ($1, $2, $3, $4, $5)', [user.username, track_id, action, track_name, artist_name]);
+        const token = await refreshIfNeeded();
+        let genresStr = "";
+        
         if (action === 'like') {
-            const token = await refreshIfNeeded();
+            const genres = await getArtistGenres(artist_id, token);
+            genresStr = genres.join(',');
+
             await axios.post(`https://api.spotify.com/v1/playlists/${process.env.SPOTIFY_TARGET_PLAYLIST_ID}/tracks`, { uris: [uri] }, {
                 headers: { Authorization: `Bearer ${token}` }
             });
         }
+
+        await db.query('INSERT INTO history (username, track_id, action, track_name, artist_name, genres) VALUES ($1, $2, $3, $4, $5, $6)', 
+            [user.username, track_id, action, track_name, artist_name, genresStr]);
+        
         res.json({ ok: true });
     } catch (e) {
         res.status(500).send(e.message);
     }
 });
 
+// API: Login met Password Hashing
 app.post('/api/login', async (req, res) => {
     const { username, password } = req.body;
     try {
@@ -113,14 +156,17 @@ app.post('/api/login', async (req, res) => {
     }
 });
 
+// API: Wachtwoord Reset
 app.post('/api/reset-password', async (req, res) => {
     const { username, oldPassword, newPassword } = req.body;
     try {
         const result = await db.query('SELECT * FROM users WHERE username = $1', [username]);
         const user = result.rows[0];
         if (!user) return res.json({ ok: false, msg: "Gebruiker niet gevonden" });
+
         const isMatch = await bcrypt.compare(oldPassword, user.password);
         if (!isMatch) return res.json({ ok: false, msg: "Oud wachtwoord onjuist" });
+
         const newHash = await bcrypt.hash(newPassword, saltRounds);
         await db.query('UPDATE users SET password = $1 WHERE id = $2', [newHash, user.id]);
         res.json({ ok: true });
@@ -134,6 +180,7 @@ app.get('/logout', (req, res) => {
     res.redirect('/');
 });
 
+// Hoofdpagina HTML (Inclusief Mobile fixes & UI)
 app.get('/', async (req, res) => {
     const user = await getActiveUser(req);
     const showSwipe = !!user;
@@ -195,11 +242,7 @@ app.get('/', async (req, res) => {
     <script>
         function togglePasswordVisibility(id) {
             const input = document.getElementById(id);
-            if (input.type === "password") {
-                input.type = "text";
-            } else {
-                input.type = "password";
-            }
+            input.type = input.type === "password" ? "text" : "password";
         }
 
         function toggleReset(show) {
@@ -289,11 +332,9 @@ app.get('/', async (req, res) => {
 
             hammer.on('panend', (ev) => {
                 if (isAnimating) return;
-                if (ev.deltaX > 150) {
-                    handleSwipe('like');
-                } else if (ev.deltaX < -150) {
-                    handleSwipe('nope');
-                } else {
+                if (ev.deltaX > 150) handleSwipe('like');
+                else if (ev.deltaX < -150) handleSwipe('nope');
+                else {
                     el.style.transform = '';
                     likeStamp.style.opacity = 0;
                     nopeStamp.style.opacity = 0;
@@ -311,10 +352,18 @@ app.get('/', async (req, res) => {
             el.style.transition = 'transform 0.5s ease-in, opacity 0.5s';
             el.style.transform = 'translate(' + moveX + 'px, ' + (el.offsetTop) + 'px) rotate(' + (moveX / 10) + 'deg)';
             el.style.opacity = '0';
+            
             fetch('/api/interact', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ track_id: t.id, action, uri: t.uri, track_name: t.name, artist_name: t.artists[0].name })
+                body: JSON.stringify({ 
+                    track_id: t.id, 
+                    action, 
+                    uri: t.uri, 
+                    track_name: t.name, 
+                    artist_name: t.artists[0].name,
+                    artist_id: t.artists[0].id 
+                })
             });
             setTimeout(() => {
                 currentIndex++;
