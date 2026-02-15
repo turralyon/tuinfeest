@@ -224,20 +224,57 @@ app.get('/', async (req, res) => {
         }
 
         ${showSwipe ? `
-        let trackList = []; let currentIndex = 0; let isAnimating = false;
-        let sLikes = 0; let sNopes = 0;
+        let trackList = []; 
+        let currentIndex = 0; 
+        let isAnimating = false;
+        let sLikes = 0; 
+        let sNopes = 0;
+        let isLoading = false; // Voorkom dubbele API calls
 
         async function loadTracks(force = false) {
-            const r = await fetch(force ? '/api/tracks?refresh=true' : '/api/tracks');
-            const newTracks = await r.json();
-            if(force) { trackList = newTracks; currentIndex = 0; } else { trackList = [...trackList, ...newTracks]; }
-            if(!document.getElementById('activeCard')) renderCard();
+            if (isLoading) return;
+            isLoading = true;
+            
+            try {
+                const r = await fetch(force ? '/api/tracks?refresh=true' : '/api/tracks');
+                const newTracks = await r.json();
+                
+                if (force) { 
+                    trackList = newTracks; 
+                    currentIndex = 0; 
+                } else { 
+                    trackList = [...trackList, ...newTracks]; 
+                }
+                
+                console.log("Tracks geladen. Totaal in lijst:", trackList.length);
+                
+                // Als er nog geen kaart is, teken er een
+                if(!document.getElementById('activeCard')) renderCard();
+            } catch (e) {
+                console.error("Fout bij laden tracks:", e);
+            } finally {
+                isLoading = false;
+            }
         }
 
         function renderCard() {
             const container = document.getElementById('tinderContainer');
-            if (currentIndex >= trackList.length - 2) loadTracks();
-            const t = trackList[currentIndex]; if(!t) return;
+            
+            // Check of we bijna aan het einde van de lijst zijn (bijv. nog 3 over)
+            // Zo ja, laad alvast de volgende batch in de achtergrond
+            if (currentIndex >= trackList.length - 3) {
+                loadTracks();
+            }
+
+            const t = trackList[currentIndex]; 
+            
+            if(!t) {
+                container.innerHTML = '<div class="login-card"><h2>Even geduld...</h2><p>Nieuwe muziek wordt gezocht.</p></div>';
+                // Forceer een extra load als de lijst echt leeg is
+                loadTracks();
+                return;
+            }
+
             container.innerHTML = \`<div class="track-card" id="activeCard">
                 <div class="stamp stamp-nope" id="nopeStamp">NOPE</div>
                 <div class="stamp stamp-like" id="likeStamp">LIKE</div>
@@ -248,24 +285,48 @@ app.get('/', async (req, res) => {
         }
 
         async function handleSwipe(action) {
-            if (isAnimating) return; isAnimating = true;
+            if (isAnimating) return; 
+            
             const t = trackList[currentIndex];
-            if(action === 'like') { sLikes++; sNopes = 0; if(sLikes === 10) showToast("Lekker bezig! Al 10 tracks toegevoegd! 🔥"); }
-            else { sNopes++; sLikes = 0; if(sNopes === 5) { showToast("Moeilijk publiek... 😉 Even wat anders!"); loadTracks(true); } }
+            if (!t) return;
+
+            isAnimating = true;
+
+            // Stats bijwerken
+            if(action === 'like') { 
+                sLikes++; sNopes = 0; 
+                if(sLikes === 10) showToast("Lekker bezig! Al 10 tracks toegevoegd! 🔥"); 
+            } else { 
+                sNopes++; sLikes = 0; 
+                if(sNopes === 5) { 
+                    showToast("Moeilijk publiek... 😉 Even wat anders!"); 
+                    loadTracks(true); // Forceer een hele nieuwe batch
+                    return; // Stop hier, loadTracks(true) regelt de nieuwe render
+                } 
+            }
 
             const el = document.getElementById('activeCard');
             const moveX = action === 'like' ? 1000 : -1000;
+            
             el.style.transition = 'transform 0.5s ease-in, opacity 0.5s';
             el.style.transform = 'translate(' + moveX + 'px, 0px) rotate(' + (moveX/10) + 'deg)';
             el.style.opacity = '0';
 
-            fetch('/api/interact', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ 
-                track_id: t.id, action, uri: t.uri, track_name: t.name, artist_name: t.artists[0].name, artist_id: t.artists[0].id 
-            })});
+            // Verstuur naar server
+            fetch('/api/interact', { 
+                method: 'POST', 
+                headers: {'Content-Type': 'application/json'}, 
+                body: JSON.stringify({ 
+                    track_id: t.id, action, uri: t.uri, track_name: t.name, artist_name: t.artists[0].name, artist_id: t.artists[0].id 
+                })
+            });
 
-            setTimeout(() => { currentIndex++; isAnimating = false; renderCard(); }, 500);
+            setTimeout(() => { 
+                currentIndex++; 
+                isAnimating = false; 
+                renderCard(); 
+            }, 500);
         }
-
         function setupHammer() {
             const el = document.getElementById('activeCard'); if(!el) return;
             const hammer = new Hammer(el.querySelector('.swipe-zone'));
