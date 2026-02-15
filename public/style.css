@@ -11,6 +11,7 @@
 html, body {
     height: 100%;
     overflow-x: hidden;
+    overscroll-behavior-y: contain; /* DIT BLOKKEERT PULL-TO-REFRESH */
     background: #f0f2f5;
 }
 
