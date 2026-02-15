@@ -280,6 +280,8 @@ ${showSwipe ? `
             setupHammer();
         }
 
+       let totalNopes = 0; // Nieuwe teller voor de hele sessie
+
         async function handleSwipe(action) {
             if (isAnimating) return; 
             
@@ -288,28 +290,67 @@ ${showSwipe ? `
 
             isAnimating = true;
 
-            // Stats bijwerken
             if(action === 'like') { 
                 sLikes++; 
-                sNopes = 0; 
+                sNopes = 0; // Reset de 'op een rij' teller
                 if(sLikes === 10) showToast("Lekker bezig! Al 10 tracks toegevoegd! 🔥"); 
             } else { 
                 sNopes++; 
+                totalNopes++;
                 sLikes = 0; 
-                if(sNopes === 5) { 
-                    showToast("Moeilijk publiek... 😉 Even wat anders!"); 
-                    sNopes = 0; // Reset teller om loop te voorkomen
-                    
-                    // Verwijder de huidige kaart visueel
+
+                // --- UITGEBREIDE FEEDBACK LOGICA ---
+                
+                const msgsLow = [
+                    "Tough crowd vandaag! 😅 Laten we nieuwe vibes proberen.",
+                    "Selectief gehoor? Slim! 🎯",
+                    "Kwaliteitscontrole op volle toeren!",
+                    "Jij bent de DJ-bouncer vanavond 🚪",
+                    "Nope-festival geopend! 🎉"
+                ];
+
+                const msgsMid = [
+                    "Zullen we even andere hoeken van de playlist induiken? 🔄",
+                    "Jouw 'nee' is sterker dan mijn playlist-algoritme 💪",
+                    "Feestpubliek moet nog even bijkomen van jouw standaarden...",
+                    `Nope-counter: ${totalNopes}. Personal record? 🏆`,
+                    "Dit is waarom jij de selector bent 👑"
+                ];
+
+                const msgsHigh = [
+                    "WOW. Jij bent de koning(in) van 'nee zeggen'! 😎",
+                    "Zelfs Spotify zweet nu... laten we refreshen! 😉",
+                    "Jouw veto-power breekt records 🚀",
+                    "De playlist huilt, maar ik bewonder je principes! 😂"
+                ];
+
+                // Bepaal welke lijst we gebruiken
+                let chosenMessage = "";
+                
+                if (sNopes === 3) {
+                    chosenMessage = msgsLow[Math.floor(Math.random() * msgsLow.length)];
+                } 
+                else if (sNopes >= 7 && sNopes <= 10) {
+                    chosenMessage = msgsMid[Math.floor(Math.random() * msgsMid.length)];
+                }
+                else if (sNopes >= 12) {
+                    chosenMessage = msgsHigh[Math.floor(Math.random() * msgsHigh.length)];
+                }
+
+                if (chosenMessage) showToast(chosenMessage);
+
+                // Geforceerde refresh bij 5 (en eventueel elke 10) nopes om de vaart erin te houden
+                if(sNopes === 5 || sNopes === 11) { 
+                    sNopes = 0; // Reset de 'op een rij' om loop te voorkomen
                     const el = document.getElementById('activeCard');
                     if(el) el.style.opacity = '0';
-                    
-                    isAnimating = false; // Reset animatie-lock voor de nieuwe batch
+                    isAnimating = false;
                     loadTracks(true); 
                     return; 
                 } 
             }
 
+            // --- ANIMATIE & API CALL (Blijft hetzelfde) ---
             const el = document.getElementById('activeCard');
             const moveX = action === 'like' ? 1000 : -1000;
             
@@ -319,7 +360,6 @@ ${showSwipe ? `
                 el.style.opacity = '0';
             }
 
-            // Interactie opslaan
             fetch('/api/interact', { 
                 method: 'POST', 
                 headers: {'Content-Type': 'application/json'}, 
