@@ -223,13 +223,13 @@ app.get('/', async (req, res) => {
             if (d.ok) { alert("Gewijzigd!"); toggleReset(false); } else { document.getElementById('resetMsg').innerText = d.msg || "Fout"; }
         }
 
-        ${showSwipe ? `
+${showSwipe ? `
         let trackList = []; 
         let currentIndex = 0; 
         let isAnimating = false;
         let sLikes = 0; 
         let sNopes = 0;
-        let isLoading = false; // Voorkom dubbele API calls
+        let isLoading = false;
 
         async function loadTracks(force = false) {
             if (isLoading) return;
@@ -242,14 +242,13 @@ app.get('/', async (req, res) => {
                 if (force) { 
                     trackList = newTracks; 
                     currentIndex = 0; 
+                    // Bij een force refresh moeten we direct de UI hertekenen
+                    renderCard();
                 } else { 
                     trackList = [...trackList, ...newTracks]; 
                 }
                 
-                console.log("Tracks geladen. Totaal in lijst:", trackList.length);
-                
-                // Als er nog geen kaart is, teken er een
-                if(!document.getElementById('activeCard')) renderCard();
+                if(!document.getElementById('activeCard') && trackList.length > 0) renderCard();
             } catch (e) {
                 console.error("Fout bij laden tracks:", e);
             } finally {
@@ -260,9 +259,8 @@ app.get('/', async (req, res) => {
         function renderCard() {
             const container = document.getElementById('tinderContainer');
             
-            // Check of we bijna aan het einde van de lijst zijn (bijv. nog 3 over)
-            // Zo ja, laad alvast de volgende batch in de achtergrond
-            if (currentIndex >= trackList.length - 3) {
+            // Als we bijna door de lijst heen zijn, laad nieuwe
+            if (currentIndex >= trackList.length - 3 && !isLoading) {
                 loadTracks();
             }
 
@@ -270,8 +268,6 @@ app.get('/', async (req, res) => {
             
             if(!t) {
                 container.innerHTML = '<div class="login-card"><h2>Even geduld...</h2><p>Nieuwe muziek wordt gezocht.</p></div>';
-                // Forceer een extra load als de lijst echt leeg is
-                loadTracks();
                 return;
             }
 
@@ -294,25 +290,36 @@ app.get('/', async (req, res) => {
 
             // Stats bijwerken
             if(action === 'like') { 
-                sLikes++; sNopes = 0; 
+                sLikes++; 
+                sNopes = 0; 
                 if(sLikes === 10) showToast("Lekker bezig! Al 10 tracks toegevoegd! 🔥"); 
             } else { 
-                sNopes++; sLikes = 0; 
+                sNopes++; 
+                sLikes = 0; 
                 if(sNopes === 5) { 
                     showToast("Moeilijk publiek... 😉 Even wat anders!"); 
-                    loadTracks(true); // Forceer een hele nieuwe batch
-                    return; // Stop hier, loadTracks(true) regelt de nieuwe render
+                    sNopes = 0; // Reset teller om loop te voorkomen
+                    
+                    // Verwijder de huidige kaart visueel
+                    const el = document.getElementById('activeCard');
+                    if(el) el.style.opacity = '0';
+                    
+                    isAnimating = false; // Reset animatie-lock voor de nieuwe batch
+                    loadTracks(true); 
+                    return; 
                 } 
             }
 
             const el = document.getElementById('activeCard');
             const moveX = action === 'like' ? 1000 : -1000;
             
-            el.style.transition = 'transform 0.5s ease-in, opacity 0.5s';
-            el.style.transform = 'translate(' + moveX + 'px, 0px) rotate(' + (moveX/10) + 'deg)';
-            el.style.opacity = '0';
+            if(el) {
+                el.style.transition = 'transform 0.5s ease-in, opacity 0.5s';
+                el.style.transform = 'translate(' + moveX + 'px, 0px) rotate(' + (moveX/10) + 'deg)';
+                el.style.opacity = '0';
+            }
 
-            // Verstuur naar server
+            // Interactie opslaan
             fetch('/api/interact', { 
                 method: 'POST', 
                 headers: {'Content-Type': 'application/json'}, 
@@ -327,20 +334,32 @@ app.get('/', async (req, res) => {
                 renderCard(); 
             }, 500);
         }
+
         function setupHammer() {
-            const el = document.getElementById('activeCard'); if(!el) return;
+            const el = document.getElementById('activeCard'); 
+            if(!el) return;
             const hammer = new Hammer(el.querySelector('.swipe-zone'));
             hammer.on('pan', (ev) => {
                 if (isAnimating) return;
                 el.style.transform = 'translate(' + ev.deltaX + 'px, ' + ev.deltaY + 'px) rotate(' + (ev.deltaX / 15) + 'deg)';
                 const op = Math.min(Math.abs(ev.deltaX) / 150, 1);
-                if (ev.deltaX > 0) { document.getElementById('likeStamp').style.opacity = op; document.getElementById('nopeStamp').style.opacity = 0; }
-                else { document.getElementById('nopeStamp').style.opacity = op; document.getElementById('likeStamp').style.opacity = 0; }
+                if (ev.deltaX > 0) { 
+                    document.getElementById('likeStamp').style.opacity = op; 
+                    document.getElementById('nopeStamp').style.opacity = 0; 
+                } else { 
+                    document.getElementById('nopeStamp').style.opacity = op; 
+                    document.getElementById('likeStamp').style.opacity = 0; 
+                }
             });
             hammer.on('panend', (ev) => {
                 if (isAnimating) return;
-                if (ev.deltaX > 150) handleSwipe('like'); else if (ev.deltaX < -150) handleSwipe('nope');
-                else { el.style.transform = ''; document.getElementById('likeStamp').style.opacity = 0; document.getElementById('nopeStamp').style.opacity = 0; }
+                if (ev.deltaX > 150) handleSwipe('like'); 
+                else if (ev.deltaX < -150) handleSwipe('nope');
+                else { 
+                    el.style.transform = ''; 
+                    document.getElementById('likeStamp').style.opacity = 0; 
+                    document.getElementById('nopeStamp').style.opacity = 0; 
+                }
             });
         }
         loadTracks();` : ''}
