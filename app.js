@@ -3,11 +3,13 @@ const express = require('express');
 const cookieParser = require('cookie-parser');
 const { v4: uuidv4 } = require('uuid');
 const axios = require('axios');
+const bcrypt = require('bcrypt');
 const db = require('./db');
 const { refreshIfNeeded } = require('./spotifyService');
 
 const app = express();
 const port = process.env.PORT || 3000;
+const saltRounds = 10;
 
 app.use(express.json());
 app.use(cookieParser('feestje_geheim_123'));
@@ -217,7 +219,7 @@ app.get('/', async (req, res) => {
                 }
                 async function handleSwipe(action) {
                     const t = trackList[currentIndex];
-                    fetch('/api/interact', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ track_id: t.id, action, uri: t.uri, track_name: t.name, artist_name: t.artists[0].name }) });
+                    await fetch('/api/interact', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ track_id: t.id, action, uri: t.uri, track_name: t.name, artist_name: t.artists[0].name }) });
                     currentIndex++; renderCard();
                 }
                 loadTracks();
