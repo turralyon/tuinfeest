@@ -242,13 +242,24 @@ app.get('/', async (req, res) => {
 app.get('/dashboard', async (req, res) => {
     const user = await getActiveUser(req);
     if (!user) return res.redirect('/');
-    const countRes = await db.query("SELECT action, COUNT(*) as count FROM history WHERE username = $1 GROUP BY action", [user.username]);
-    let stats = { likes: 0, nopes: 0 };
-    countRes.rows.forEach(r => { if (r.action === 'like') stats.likes = r.count; if (r.action === 'nope') stats.nopes = r.count; });
-    const artistRes = await db.query("SELECT artist_name, COUNT(*) as count FROM history WHERE username = $1 AND action = 'like' GROUP BY artist_name ORDER BY count DESC LIMIT 5", [user.username]);
-    const trackRes = await db.query("SELECT track_name, artist_name FROM history WHERE username = $1 AND action = 'like' ORDER BY id DESC LIMIT 10", [user.username]);
 
-    res.send(`<!DOCTYPE html>
+    try {
+        // 1. Haal Likes/Nopes op
+        const countRes = await db.query("SELECT action, COUNT(*) as count FROM history WHERE username = $1 GROUP BY action", [user.username]);
+        let stats = { likes: 0, nopes: 0 };
+        countRes.rows.forEach(r => { 
+            if (r.action === 'like') stats.likes = r.count; 
+            if (r.action === 'nope') stats.nopes = r.count; 
+        });
+
+        // 2. Top 5 Artiesten
+        const artistRes = await db.query("SELECT artist_name, COUNT(*) as count FROM history WHERE username = $1 AND action = 'like' GROUP BY artist_name ORDER BY count DESC LIMIT 5", [user.username]);
+
+        // 3. Laatste 10 gelikete tracks
+        const trackRes = await db.query("SELECT track_name, artist_name FROM history WHERE username = $1 AND action = 'like' ORDER BY id DESC LIMIT 10", [user.username]);
+
+        // De HTML response
+        res.send(`<!DOCTYPE html>
 <html lang="nl">
 <head>
     <meta charset="UTF-8">
@@ -263,29 +274,47 @@ app.get('/dashboard', async (req, res) => {
         <div class="user-menu"><a href="/logout" class="logout-link">LOGUIT</a></div>
     </header>
     <main>
-        <div class="login-card" style="max-height: 80vh; overflow-y: auto;">
+        <div class="login-card" style="max-height: 85vh; overflow-y: auto;">
             <h2 class="login-header-main">Lekker bezig, ${user.username}!</h2>
-            <div class="stats-row" style="display:flex; justify-content: space-around; margin: 20px 0; border-bottom: 1px solid #eee; padding-bottom: 10px;">
-                <div style="text-align:center;"><strong>${stats.likes}</strong><br><small>Likes</small></div>
-                <div style="text-align:center;"><strong>${stats.nopes}</strong><br><small>Nopes</small></div>
+            
+            <div class="stats-row" style="display:flex; justify-content: space-around; margin: 20px 0; border-bottom: 1px solid #eee; padding-bottom: 15px;">
+                <div style="text-align:center;"><strong style="font-size:1.5rem; color:#1DB954;">${stats.likes}</strong><br><small>Likes</small></div>
+                <div style="text-align:center;"><strong style="font-size:1.5rem; color:#fe8777;">${stats.nopes}</strong><br><small>Nopes</small></div>
             </div>
-            <div style="text-align:left; margin-bottom: 20px;">
-                <h3 style="font-family:'Bebas Neue'; color:#fe8777;">Top 5 Artiesten</h3>
-                <ul style="list-style:none; font-size:0.9rem;">
-                    ${artistRes.rows.map(a => `<li style="border-bottom:1px solid #f9f9f9; padding:5px 0;">\${a.artist_name} <span style="float:right; color:#888;">\${a.count}x</span></li>`).join('')}
+
+            <div style="text-align:left; margin-bottom: 25px;">
+                <h3 style="font-family:'Bebas Neue', sans-serif; color:#fe8777; border-bottom: 2px solid #f0f0f0;">Top 5 Artiesten</h3>
+                <ul style="list-style:none; padding:0; margin-top:10px;">
+                    ${artistRes.rows.map(a => `
+                        <li style="display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid #f9f9f9; font-size:1rem;">
+                            <span>${a.artist_name}</span>
+                            <span style="color:#888; font-weight:bold;">${a.count}x</span>
+                        </li>
+                    `).join('') || '<li style="color:#888;">Nog geen artiesten geliket.</li>'}
                 </ul>
             </div>
+
             <div style="text-align:left;">
-                <h3 style="font-family:'Bebas Neue'; color:#fe8777;">Laatst Geliket</h3>
-                <ul style="list-style:none; font-size:0.8rem;">
-                    ${trackRes.rows.map(t => `<li style="margin-bottom:8px;"><strong>\${t.track_name}</strong><br>\${t.artist_name}</li>`).join('')}
+                <h3 style="font-family:'Bebas Neue', sans-serif; color:#fe8777; border-bottom: 2px solid #f0f0f0;">Laatst Geliket</h3>
+                <ul style="list-style:none; padding:0; margin-top:10px;">
+                    ${trackRes.rows.map(t => `
+                        <li style="margin-bottom:12px; border-left: 3px solid #1DB954; padding-left:10px;">
+                            <strong style="font-size:0.95rem; display:block;">${t.track_name}</strong>
+                            <span style="font-size:0.8rem; color:#666;">${t.artist_name}</span>
+                        </li>
+                    `).join('') || '<li style="color:#888;">Nog geen nummers geliket.</li>'}
                 </ul>
             </div>
-            <button onclick="window.location.href='/'" class="btn-start" style="margin-top:20px;">BACK TO SWIPE</button>
+
+            <button onclick="window.location.href='/'" class="btn-start" style="margin-top:20px; width:100%;">BACK TO SWIPE</button>
         </div>
     </main>
 </body>
 </html>`);
+    } catch (e) {
+        console.error(e);
+        res.status(500).send("Er ging iets mis bij het laden van je stats.");
+    }
 });
 
 app.listen(port, () => console.log(`Feest draait op poort ${port}`));
