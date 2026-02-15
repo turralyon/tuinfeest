@@ -33,7 +33,7 @@ async function getArtistGenres(artistId, token) {
         const res = await axios.get(`https://api.spotify.com/v1/artists/${artistId}`, {
             headers: { Authorization: `Bearer ${token}` }
         });
-        return res.data.genres; // bijv. ["pop", "dance-pop"]
+        return res.data.genres; 
     } catch (e) {
         return [];
     }
@@ -46,14 +46,12 @@ app.get('/api/tracks', async (req, res) => {
     try {
         const token = await refreshIfNeeded();
         
-        // Haal geschiedenis op inclusief genres voor het algoritme
         const historyRes = await db.query("SELECT track_id, action, genres FROM history WHERE (username = $1 OR track_id = 'BAN_ARTIST')", [user.username]);
         const history = historyRes.rows || [];
         
         const viewed = new Set(history.filter(h => h.username === user.username).map(h => h.track_id));
         const artistBans = new Set(history.filter(h => h.track_id === 'BAN_ARTIST').map(h => h.action.toLowerCase()));
         
-        // Tel welke genres de gebruiker vaak "liked"
         const genreScores = {};
         history.filter(h => h.action === 'like' && h.username === user.username).forEach(h => {
             if (h.genres) {
@@ -76,12 +74,10 @@ app.get('/api/tracks', async (req, res) => {
 
         let candidates = resp.data.items.map(i => i.track).filter(t => t && t.id && !viewed.has(t.id) && !artistBans.has(t.artists[0].name.toLowerCase()));
 
-        // Haal genres op voor de eerste 15 kandidaten om te kunnen sorteren
         for (let track of candidates.slice(0, 15)) {
             track.temp_genres = await getArtistGenres(track.artists[0].id, token);
         }
 
-        // Sorteren: Geef een score op basis van hoeveel favoriete genres een track heeft
         candidates.sort((a, b) => {
             const aScore = (a.temp_genres || []).reduce((acc, g) => acc + (genreScores[g] || 0), 0);
             const bScore = (b.temp_genres || []).reduce((acc, g) => acc + (genreScores[g] || 0), 0);
@@ -107,7 +103,6 @@ app.post('/api/interact', async (req, res) => {
         if (action === 'like') {
             const genres = await getArtistGenres(artist_id, token);
             genresStr = genres.join(',');
-
             await axios.post(`https://api.spotify.com/v1/playlists/${process.env.SPOTIFY_TARGET_PLAYLIST_ID}/tracks`, { uris: [uri] }, {
                 headers: { Authorization: `Bearer ${token}` }
             });
@@ -122,7 +117,7 @@ app.post('/api/interact', async (req, res) => {
     }
 });
 
-// API: Login met Password Hashing
+// API: Login met Hashing
 app.post('/api/login', async (req, res) => {
     const { username, password } = req.body;
     try {
@@ -151,28 +146,22 @@ app.post('/api/login', async (req, res) => {
         } else {
             res.json({ ok: false });
         }
-    } catch (e) {
-        res.status(500).send("Server fout");
-    }
+    } catch (e) { res.status(500).send("Server fout"); }
 });
 
-// API: Wachtwoord Reset
+// API: Reset
 app.post('/api/reset-password', async (req, res) => {
     const { username, oldPassword, newPassword } = req.body;
     try {
         const result = await db.query('SELECT * FROM users WHERE username = $1', [username]);
         const user = result.rows[0];
         if (!user) return res.json({ ok: false, msg: "Gebruiker niet gevonden" });
-
         const isMatch = await bcrypt.compare(oldPassword, user.password);
         if (!isMatch) return res.json({ ok: false, msg: "Oud wachtwoord onjuist" });
-
         const newHash = await bcrypt.hash(newPassword, saltRounds);
         await db.query('UPDATE users SET password = $1 WHERE id = $2', [newHash, user.id]);
         res.json({ ok: true });
-    } catch (e) {
-        res.status(500).json({ ok: false, msg: "Server fout" });
-    }
+    } catch (e) { res.status(500).json({ ok: false, msg: "Server fout" }); }
 });
 
 app.get('/logout', (req, res) => {
@@ -180,10 +169,24 @@ app.get('/logout', (req, res) => {
     res.redirect('/');
 });
 
-// Hoofdpagina HTML (Inclusief Mobile fixes & UI)
+// Route: Index met Dashboard en Swipe
 app.get('/', async (req, res) => {
     const user = await getActiveUser(req);
     const showSwipe = !!user;
+
+    let stats = { likes: 0, nopes: 0 };
+    let topArtists = [];
+    let recentTracks = [];
+
+    if (user) {
+        const countRes = await db.query("SELECT action, COUNT(*) as count FROM history WHERE username = $1 GROUP BY action", [user.username]);
+        countRes.rows.forEach(r => { if (r.action === 'like') stats.likes = r.count; if (r.action === 'nope') stats.nopes = r.count; });
+        const artistRes = await db.query("SELECT artist_name, COUNT(*) as count FROM history WHERE username = $1 AND action = 'like' GROUP BY artist_name ORDER BY count DESC LIMIT 5", [user.username]);
+        topArtists = artistRes.rows;
+        const trackRes = await db.query("SELECT track_name, artist_name FROM history WHERE username = $1 AND action = 'like' ORDER BY id DESC LIMIT 10", [user.username]);
+        recentTracks = trackRes.rows;
+    }
+
     res.send(`<!DOCTYPE html>
 <html lang="nl">
 <head>
@@ -231,7 +234,21 @@ app.get('/', async (req, res) => {
                 <a href="#" onclick="toggleReset(false)" style="display:block; margin-top:15px; font-size:0.8rem; color:#666; text-decoration:none;">Terug naar login</a>
             </div>
         ` : `
-            <div class="status-bar">Lekker bezig, <b>${user.username}</b>!</div>
+            <div class="dashboard">
+                <div class="stats-row">
+                    <div class="stat-box"><strong>${stats.likes}</strong><br>Likes</div>
+                    <div class="stat-box"><strong>${stats.nopes}</strong><br>Nopes</div>
+                </div>
+                <div class="info-section">
+                    <h3>Top 5 Artiesten</h3>
+                    <ul class="stats-list">${topArtists.map(a => `<li>${a.artist_name} <span>(${a.count}x)</span></li>`).join('') || 'Nog geen likes'}</ul>
+                </div>
+                <div class="info-section">
+                    <h3>Recent Geliket</h3>
+                    <ul class="stats-list">${recentTracks.map(t => `<li>${t.track_name} - <em>${t.artist_name}</em></li>`).join('') || 'Nog niks'}</ul>
+                </div>
+            </div>
+
             <div class="tinder-container" id="tinderContainer"></div>
             <div class="controls">
                 <button class="circle-btn btn-nope" onclick="handleSwipe('nope')">✖</button>
@@ -244,41 +261,24 @@ app.get('/', async (req, res) => {
             const input = document.getElementById(id);
             input.type = input.type === "password" ? "text" : "password";
         }
-
         function toggleReset(show) {
             document.getElementById('loginForm').style.display = show ? 'none' : 'block';
             document.getElementById('resetForm').style.display = show ? 'block' : 'none';
         }
-
         async function login() {
             const username = document.getElementById('userInput').value;
             const password = document.getElementById('passInput').value;
-            const r = await fetch('/api/login', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ username, password })
-            });
+            const r = await fetch('/api/login', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ username, password }) });
             const d = await r.json();
-            if (d.ok) location.reload();
-            else document.getElementById('msg').innerText = "Foutje!";
+            if (d.ok) location.reload(); else document.getElementById('msg').innerText = "Foutje!";
         }
-
         async function resetPassword() {
             const username = document.getElementById('resetUser').value;
             const oldPassword = document.getElementById('oldPass').value;
             const newPassword = document.getElementById('newPass').value;
-            const r = await fetch('/api/reset-password', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ username, oldPassword, newPassword })
-            });
+            const r = await fetch('/api/reset-password', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ username, oldPassword, newPassword }) });
             const d = await r.json();
-            if (d.ok) {
-                alert("Wachtwoord succesvol gewijzigd!");
-                toggleReset(false);
-            } else {
-                document.getElementById('resetMsg').innerText = d.msg || "Fout bij resetten";
-            }
+            if (d.ok) { alert("Gewijzigd!"); toggleReset(false); } else { document.getElementById('resetMsg').innerText = d.msg || "Fout"; }
         }
 
         ${showSwipe ? `
@@ -315,30 +315,19 @@ app.get('/', async (req, res) => {
             const hammer = new Hammer(el.querySelector('.swipe-zone'));
             const likeStamp = document.getElementById('likeStamp');
             const nopeStamp = document.getElementById('nopeStamp');
-
             hammer.on('pan', (ev) => {
                 if (isAnimating) return;
                 const rotate = ev.deltaX / 15;
                 el.style.transform = 'translate(' + ev.deltaX + 'px, ' + ev.deltaY + 'px) rotate(' + rotate + 'deg)';
                 const opacity = Math.min(Math.abs(ev.deltaX) / 150, 1);
-                if (ev.deltaX > 0) {
-                    likeStamp.style.opacity = opacity;
-                    nopeStamp.style.opacity = 0;
-                } else {
-                    nopeStamp.style.opacity = opacity;
-                    likeStamp.style.opacity = 0;
-                }
+                if (ev.deltaX > 0) { likeStamp.style.opacity = opacity; nopeStamp.style.opacity = 0; }
+                else { nopeStamp.style.opacity = opacity; likeStamp.style.opacity = 0; }
             });
-
             hammer.on('panend', (ev) => {
                 if (isAnimating) return;
                 if (ev.deltaX > 150) handleSwipe('like');
                 else if (ev.deltaX < -150) handleSwipe('nope');
-                else {
-                    el.style.transform = '';
-                    likeStamp.style.opacity = 0;
-                    nopeStamp.style.opacity = 0;
-                }
+                else { el.style.transform = ''; likeStamp.style.opacity = 0; nopeStamp.style.opacity = 0; }
             });
         }
 
@@ -357,19 +346,12 @@ app.get('/', async (req, res) => {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({ 
-                    track_id: t.id, 
-                    action, 
-                    uri: t.uri, 
-                    track_name: t.name, 
-                    artist_name: t.artists[0].name,
+                    track_id: t.id, action, uri: t.uri, 
+                    track_name: t.name, artist_name: t.artists[0].name,
                     artist_id: t.artists[0].id 
                 })
             });
-            setTimeout(() => {
-                currentIndex++;
-                isAnimating = false;
-                renderCard();
-            }, 500);
+            setTimeout(() => { currentIndex++; isAnimating = false; renderCard(); }, 500);
         }
         loadTracks();
         ` : ''}
