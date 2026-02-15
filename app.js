@@ -26,7 +26,6 @@ const getActiveUser = async (req) => {
     }
 };
 
-// API: Tracks ophalen
 app.get('/api/tracks', async (req, res) => {
     const user = await getActiveUser(req);
     if (!user) return res.status(401).send();
@@ -63,7 +62,6 @@ app.get('/api/tracks', async (req, res) => {
     }
 });
 
-// API: Interactie (Like/Nope)
 app.post('/api/interact', async (req, res) => {
     const user = await getActiveUser(req);
     if (!user) return res.status(401).send();
@@ -82,7 +80,6 @@ app.post('/api/interact', async (req, res) => {
     }
 });
 
-// API: Login
 app.post('/api/login', async (req, res) => {
     const { username, password } = req.body;
     try {
@@ -116,12 +113,27 @@ app.post('/api/login', async (req, res) => {
     }
 });
 
+app.post('/api/reset-password', async (req, res) => {
+    const { username, oldPassword, newPassword } = req.body;
+    try {
+        const result = await db.query('SELECT * FROM users WHERE username = $1', [username]);
+        const user = result.rows[0];
+        if (!user) return res.json({ ok: false, msg: "Gebruiker niet gevonden" });
+        const isMatch = await bcrypt.compare(oldPassword, user.password);
+        if (!isMatch) return res.json({ ok: false, msg: "Oud wachtwoord onjuist" });
+        const newHash = await bcrypt.hash(newPassword, saltRounds);
+        await db.query('UPDATE users SET password = $1 WHERE id = $2', [newHash, user.id]);
+        res.json({ ok: true });
+    } catch (e) {
+        res.status(500).json({ ok: false, msg: "Server fout" });
+    }
+});
+
 app.get('/logout', (req, res) => {
     res.clearCookie('user_auth');
     res.redirect('/');
 });
 
-// Hoofdpagina
 app.get('/', async (req, res) => {
     const user = await getActiveUser(req);
     const showSwipe = !!user;
@@ -142,13 +154,34 @@ app.get('/', async (req, res) => {
     </header>
     <main>
         ${!showSwipe ? `
-            <div class="login-card">
+            <div class="login-card" id="loginForm">
                 <h2 class="login-header-main">Welkom bij</h2>
                 <h1 class="login-header-sub">Tuinfeest</h1>
                 <input type="text" id="userInput" placeholder="Naam">
-                <input type="password" id="passInput" placeholder="Wachtwoord">
+                <div class="password-wrapper">
+                    <input type="password" id="passInput" placeholder="Wachtwoord">
+                    <span class="toggle-password" onclick="togglePasswordVisibility('passInput')">👁️</span>
+                </div>
                 <button onclick="login()" class="btn-start">START</button>
                 <p id="msg"></p>
+                <a href="#" onclick="toggleReset(true)" style="display:block; margin-top:15px; font-size:0.8rem; color:#666; text-decoration:none;">Wachtwoord veranderen?</a>
+            </div>
+
+            <div class="login-card" id="resetForm" style="display:none;">
+                <h2 class="login-header-main">Wachtwoord</h2>
+                <h1 class="login-header-sub">Reset</h1>
+                <input type="text" id="resetUser" placeholder="Naam">
+                <div class="password-wrapper">
+                    <input type="password" id="oldPass" placeholder="Oud Wachtwoord">
+                    <span class="toggle-password" onclick="togglePasswordVisibility('oldPass')">👁️</span>
+                </div>
+                <div class="password-wrapper">
+                    <input type="password" id="newPass" placeholder="Nieuw Wachtwoord">
+                    <span class="toggle-password" onclick="togglePasswordVisibility('newPass')">👁️</span>
+                </div>
+                <button onclick="resetPassword()" class="btn-start">UPDATE</button>
+                <p id="resetMsg"></p>
+                <a href="#" onclick="toggleReset(false)" style="display:block; margin-top:15px; font-size:0.8rem; color:#666; text-decoration:none;">Terug naar login</a>
             </div>
         ` : `
             <div class="status-bar">Lekker bezig, <b>${user.username}</b>!</div>
@@ -160,6 +193,20 @@ app.get('/', async (req, res) => {
         `}
     </main>
     <script>
+        function togglePasswordVisibility(id) {
+            const input = document.getElementById(id);
+            if (input.type === "password") {
+                input.type = "text";
+            } else {
+                input.type = "password";
+            }
+        }
+
+        function toggleReset(show) {
+            document.getElementById('loginForm').style.display = show ? 'none' : 'block';
+            document.getElementById('resetForm').style.display = show ? 'block' : 'none';
+        }
+
         async function login() {
             const username = document.getElementById('userInput').value;
             const password = document.getElementById('passInput').value;
@@ -171,6 +218,24 @@ app.get('/', async (req, res) => {
             const d = await r.json();
             if (d.ok) location.reload();
             else document.getElementById('msg').innerText = "Foutje!";
+        }
+
+        async function resetPassword() {
+            const username = document.getElementById('resetUser').value;
+            const oldPassword = document.getElementById('oldPass').value;
+            const newPassword = document.getElementById('newPass').value;
+            const r = await fetch('/api/reset-password', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ username, oldPassword, newPassword })
+            });
+            const d = await r.json();
+            if (d.ok) {
+                alert("Wachtwoord succesvol gewijzigd!");
+                toggleReset(false);
+            } else {
+                document.getElementById('resetMsg').innerText = d.msg || "Fout bij resetten";
+            }
         }
 
         ${showSwipe ? `
@@ -188,10 +253,8 @@ app.get('/', async (req, res) => {
         function renderCard() {
             const container = document.getElementById('tinderContainer');
             if (currentIndex >= trackList.length - 2) loadTracks();
-            
             const t = trackList[currentIndex];
             if(!t) return;
-
             container.innerHTML = \`
                 <div class="track-card" id="activeCard">
                     <div class="stamp stamp-nope" id="nopeStamp">NOPE</div>
@@ -205,6 +268,7 @@ app.get('/', async (req, res) => {
 
         function setupHammer() {
             const el = document.getElementById('activeCard');
+            if(!el) return;
             const hammer = new Hammer(el.querySelector('.swipe-zone'));
             const likeStamp = document.getElementById('likeStamp');
             const nopeStamp = document.getElementById('nopeStamp');
@@ -213,8 +277,6 @@ app.get('/', async (req, res) => {
                 if (isAnimating) return;
                 const rotate = ev.deltaX / 15;
                 el.style.transform = 'translate(' + ev.deltaX + 'px, ' + ev.deltaY + 'px) rotate(' + rotate + 'deg)';
-                
-                // Dynamische opacity
                 const opacity = Math.min(Math.abs(ev.deltaX) / 150, 1);
                 if (ev.deltaX > 0) {
                     likeStamp.style.opacity = opacity;
@@ -242,31 +304,24 @@ app.get('/', async (req, res) => {
         async function handleSwipe(action) {
             if (isAnimating) return;
             isAnimating = true;
-
             const el = document.getElementById('activeCard');
             const t = trackList[currentIndex];
             if(!el || !t) return;
-
-            // Wegvlieg effect
             const moveX = action === 'like' ? 1000 : -1000;
             el.style.transition = 'transform 0.5s ease-in, opacity 0.5s';
             el.style.transform = 'translate(' + moveX + 'px, ' + (el.offsetTop) + 'px) rotate(' + (moveX / 10) + 'deg)';
             el.style.opacity = '0';
-
-            // API call
             fetch('/api/interact', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({ track_id: t.id, action, uri: t.uri, track_name: t.name, artist_name: t.artists[0].name })
             });
-
             setTimeout(() => {
                 currentIndex++;
                 isAnimating = false;
                 renderCard();
             }, 500);
         }
-
         loadTracks();
         ` : ''}
     </script>
