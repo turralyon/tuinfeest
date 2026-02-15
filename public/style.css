@@ -242,3 +242,31 @@ main {
 .tinder-container {
     height: 380px;
 }
+/* Toast Meldingen */
+.toast {
+    position: fixed;
+    top: 80px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(254, 135, 119, 0.95); /* De feestkleur uit je header */
+    color: white;
+    padding: 12px 20px;
+    border-radius: 25px;
+    font-size: 0.9rem;
+    font-weight: bold;
+    z-index: 1000;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+    animation: slideDown 0.3s ease-out, fadeOut 0.5s 2.5s forwards;
+    pointer-events: none;
+    text-align: center;
+    min-width: 200px;
+}
+
+@keyframes slideDown {
+    from { top: -50px; opacity: 0; }
+    to { top: 80px; opacity: 1; }
+}
+
+@keyframes fadeOut {
+    to { opacity: 0; }
+}
