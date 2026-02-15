@@ -280,7 +280,8 @@ ${showSwipe ? `
             setupHammer();
         }
 
-       let totalNopes = 0; // Nieuwe teller voor de hele sessie
+      let totalNopes = 0; 
+        let totalLikes = 0; // Nieuwe teller voor het totaal aantal likes
 
         async function handleSwipe(action) {
             if (isAnimating) return; 
@@ -290,18 +291,55 @@ ${showSwipe ? `
 
             isAnimating = true;
 
+            let chosenMessage = "";
+
             if(action === 'like') { 
                 sLikes++; 
-                sNopes = 0; // Reset de 'op een rij' teller
-                if(sLikes === 10) showToast("Lekker bezig! Al 10 tracks toegevoegd! 🔥"); 
+                totalLikes++;
+                sNopes = 0; // Reset nopes op een rij
+
+                // --- LIKE FEEDBACK LOGICA ---
+                const msgsLikeLow = [
+                    "Feestje begint vorm te krijgen! 🎉",
+                    "Goede smaak! Deze gaat op de lijst ✅",
+                    "DJ-modus: AAN 🔥",
+                    "De playlist wordt beter door jou!",
+                    "Yes! Perfecte toevoeging! ✨"
+                ];
+
+                const msgsLikeMid = [
+                    `Je bent op vuur vandaag! ${sLikes} hits! 🚀`,
+                    "Feestgaranties in de maak! 🎶",
+                    "Dit wordt ÉPISCH door jouw keuzes!",
+                    `Like-streak: ${sLikes}! De crowd gaat los! 💥`,
+                    "Jouw playlist-vibe is perfect 👌"
+                ];
+
+                const msgsLikeHigh = [
+                    `WOW ${totalLikes} likes?! Jij BENT het feest! 🏆`,
+                    "Super-DJ status unlocked! 🌟",
+                    "De tuinfeest-playlist is nu 100% beter!",
+                    `Record-breaker! ${totalLikes} parels gevonden 💎`,
+                    "Spotify is jaloers op jouw playlist-smaak! 😎"
+                ];
+
+                if (sLikes === 3) {
+                    chosenMessage = msgsLikeLow[Math.floor(Math.random() * msgsLikeLow.length)];
+                } else if (sLikes >= 7 && sLikes <= 10) {
+                    chosenMessage = msgsLikeMid[Math.floor(Math.random() * msgsLikeMid.length)];
+                } else if (totalLikes === 12) { // Bij exact 12 totaal
+                    chosenMessage = msgsLikeHigh[Math.floor(Math.random() * msgsLikeHigh.length)];
+                } else if (totalLikes > 12 && totalLikes % 10 === 0) { // Daarna om de 10 likes
+                    chosenMessage = msgsLikeHigh[Math.floor(Math.random() * msgsLikeHigh.length)];
+                }
+
             } else { 
                 sNopes++; 
                 totalNopes++;
-                sLikes = 0; 
+                sLikes = 0; // Reset likes op een rij
 
-                // --- UITGEBREIDE FEEDBACK LOGICA ---
-                
-                const msgsLow = [
+                // --- NOPE FEEDBACK LOGICA ---
+                const msgsNopeLow = [
                     "Tough crowd vandaag! 😅 Laten we nieuwe vibes proberen.",
                     "Selectief gehoor? Slim! 🎯",
                     "Kwaliteitscontrole op volle toeren!",
@@ -309,7 +347,7 @@ ${showSwipe ? `
                     "Nope-festival geopend! 🎉"
                 ];
 
-                const msgsMid = [
+                const msgsNopeMid = [
                     "Zullen we even andere hoeken van de playlist induiken? 🔄",
                     "Jouw 'nee' is sterker dan mijn playlist-algoritme 💪",
                     "Feestpubliek moet nog even bijkomen van jouw standaarden...",
@@ -317,31 +355,25 @@ ${showSwipe ? `
                     "Dit is waarom jij de selector bent 👑"
                 ];
 
-                const msgsHigh = [
+                const msgsNopeHigh = [
                     "WOW. Jij bent de koning(in) van 'nee zeggen'! 😎",
                     "Zelfs Spotify zweet nu... laten we refreshen! 😉",
                     "Jouw veto-power breekt records 🚀",
                     "De playlist huilt, maar ik bewonder je principes! 😂"
                 ];
 
-                // Bepaal welke lijst we gebruiken
-                let chosenMessage = "";
-                
                 if (sNopes === 3) {
-                    chosenMessage = msgsLow[Math.floor(Math.random() * msgsLow.length)];
-                } 
-                else if (sNopes >= 7 && sNopes <= 10) {
-                    chosenMessage = msgsMid[Math.floor(Math.random() * msgsMid.length)];
-                }
-                else if (sNopes >= 12) {
-                    chosenMessage = msgsHigh[Math.floor(Math.random() * msgsHigh.length)];
+                    chosenMessage = msgsNopeLow[Math.floor(Math.random() * msgsNopeLow.length)];
+                } else if (sNopes >= 7 && sNopes <= 10) {
+                    chosenMessage = msgsNopeMid[Math.floor(Math.random() * msgsNopeMid.length)];
+                } else if (totalNopes >= 12 && totalNopes % 5 === 0) { // Om de 5 nopes bij hoge irritatie
+                    chosenMessage = msgsNopeHigh[Math.floor(Math.random() * msgsNopeHigh.length)];
                 }
 
-                if (chosenMessage) showToast(chosenMessage);
-
-                // Geforceerde refresh bij 5 (en eventueel elke 10) nopes om de vaart erin te houden
-                if(sNopes === 5 || sNopes === 11) { 
-                    sNopes = 0; // Reset de 'op een rij' om loop te voorkomen
+                // Forceer refresh bij 5 nopes
+                if(sNopes === 5) { 
+                    if (chosenMessage) showToast(chosenMessage);
+                    sNopes = 0; 
                     const el = document.getElementById('activeCard');
                     if(el) el.style.opacity = '0';
                     isAnimating = false;
@@ -350,7 +382,10 @@ ${showSwipe ? `
                 } 
             }
 
-            // --- ANIMATIE & API CALL (Blijft hetzelfde) ---
+            // Toon de gekozen toast (als die er is)
+            if (chosenMessage) showToast(chosenMessage);
+
+            // --- DE STANDAARD ANIMATIE EN API CALL ---
             const el = document.getElementById('activeCard');
             const moveX = action === 'like' ? 1000 : -1000;
             
