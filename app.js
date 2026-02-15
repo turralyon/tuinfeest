@@ -62,7 +62,6 @@ app.get('/api/tracks', async (req, res) => {
 
         let candidates = resp.data.items.map(i => i.track).filter(t => t && t.id && !viewed.has(t.id) && !artistBans.has(t.artists[0].name.toLowerCase()));
 
-        // Genre Algoritme Ranking
         const genreScores = {};
         history.filter(h => h.action === 'like' && h.username === user.username).forEach(h => {
             if (h.genres) h.genres.split(',').forEach(g => { genreScores[g] = (genreScores[g] || 0) + 1; });
@@ -102,7 +101,7 @@ app.post('/api/interact', async (req, res) => {
     } catch (e) { res.status(500).send(e.message); }
 });
 
-// --- AUTH ---
+// --- AUTH & RESET ---
 
 app.post('/api/login', async (req, res) => {
     const { username, password } = req.body;
@@ -120,9 +119,23 @@ app.post('/api/login', async (req, res) => {
     } catch (e) { res.status(500).send("Fout"); }
 });
 
+app.post('/api/reset-password', async (req, res) => {
+    const { username, oldPassword, newPassword } = req.body;
+    try {
+        const result = await db.query('SELECT * FROM users WHERE username = $1', [username]);
+        const user = result.rows[0];
+        if (!user) return res.json({ ok: false, msg: "Gebruiker niet gevonden" });
+        const isMatch = await bcrypt.compare(oldPassword, user.password);
+        if (!isMatch) return res.json({ ok: false, msg: "Oud wachtwoord onjuist" });
+        const newHash = await bcrypt.hash(newPassword, saltRounds);
+        await db.query('UPDATE users SET password = $1 WHERE id = $2', [newHash, user.id]);
+        res.json({ ok: true });
+    } catch (e) { res.status(500).json({ ok: false, msg: "Server fout" }); }
+});
+
 app.get('/logout', (req, res) => { res.clearCookie('user_auth'); res.redirect('/'); });
 
-// --- PAGES ---
+// --- SWIPE PAGINA ---
 
 app.get('/', async (req, res) => {
     const user = await getActiveUser(req);
@@ -145,12 +158,33 @@ app.get('/', async (req, res) => {
     </header>
     <main>
         ${!showSwipe ? `
-            <div class="login-card">
+            <div id="loginForm" class="login-card">
                 <h2 class="login-header-main">Welkom bij</h2>
                 <h1 class="login-header-sub">Tuinfeest</h1>
                 <input type="text" id="userInput" placeholder="Naam">
-                <input type="password" id="passInput" placeholder="Wachtwoord">
+                <div class="password-wrapper">
+                    <input type="password" id="passInput" placeholder="Wachtwoord">
+                    <span class="toggle-password" onclick="togglePasswordVisibility('passInput')">👁️</span>
+                </div>
                 <button onclick="login()" class="btn-start">START</button>
+                <a href="#" onclick="toggleReset(true)" class="small-link" style="display:block; margin-top:15px; font-size:0.8rem; color:#666;">Wachtwoord veranderen?</a>
+            </div>
+
+            <div id="resetForm" class="login-card" style="display:none;">
+                <h2 class="login-header-main">Wachtwoord</h2>
+                <h1 class="login-header-sub">Reset</h1>
+                <input type="text" id="resetUser" placeholder="Naam">
+                <div class="password-wrapper">
+                    <input type="password" id="oldPass" placeholder="Oud Wachtwoord">
+                    <span class="toggle-password" onclick="togglePasswordVisibility('oldPass')">👁️</span>
+                </div>
+                <div class="password-wrapper">
+                    <input type="password" id="newPass" placeholder="Nieuw Wachtwoord">
+                    <span class="toggle-password" onclick="togglePasswordVisibility('newPass')">👁️</span>
+                </div>
+                <button onclick="resetPassword()" class="btn-start">UPDATE</button>
+                <a href="#" onclick="toggleReset(false)" class="small-link" style="display:block; margin-top:15px; font-size:0.8rem; color:#666;">Terug naar login</a>
+                <p id="resetMsg"></p>
             </div>
         ` : `
             <div class="tinder-container" id="tinderContainer"></div>
@@ -161,17 +195,32 @@ app.get('/', async (req, res) => {
         `}
     </main>
     <script>
+        function togglePasswordVisibility(id) {
+            const input = document.getElementById(id);
+            input.type = input.type === "password" ? "text" : "password";
+        }
+        function toggleReset(show) {
+            document.getElementById('loginForm').style.display = show ? 'none' : 'block';
+            document.getElementById('resetForm').style.display = show ? 'block' : 'none';
+        }
         function showToast(msg) {
             const container = document.getElementById('toastContainer');
             const t = document.createElement('div'); t.className = 'toast'; t.innerText = msg;
             container.appendChild(t); setTimeout(() => t.remove(), 3000);
         }
-
         async function login() {
             const username = document.getElementById('userInput').value;
             const password = document.getElementById('passInput').value;
             const r = await fetch('/api/login', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ username, password }) });
             const d = await r.json(); if (d.ok) location.reload(); else alert("Foutje!");
+        }
+        async function resetPassword() {
+            const username = document.getElementById('resetUser').value;
+            const oldPassword = document.getElementById('oldPass').value;
+            const newPassword = document.getElementById('newPass').value;
+            const r = await fetch('/api/reset-password', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ username, oldPassword, newPassword }) });
+            const d = await r.json();
+            if (d.ok) { alert("Gewijzigd!"); toggleReset(false); } else { document.getElementById('resetMsg').innerText = d.msg || "Fout"; }
         }
 
         ${showSwipe ? `
@@ -239,26 +288,19 @@ app.get('/', async (req, res) => {
 </html>`);
 });
 
+// --- DASHBOARD PAGINA ---
+
 app.get('/dashboard', async (req, res) => {
     const user = await getActiveUser(req);
     if (!user) return res.redirect('/');
-
     try {
-        // 1. Haal Likes/Nopes op
         const countRes = await db.query("SELECT action, COUNT(*) as count FROM history WHERE username = $1 GROUP BY action", [user.username]);
         let stats = { likes: 0, nopes: 0 };
-        countRes.rows.forEach(r => { 
-            if (r.action === 'like') stats.likes = r.count; 
-            if (r.action === 'nope') stats.nopes = r.count; 
-        });
+        countRes.rows.forEach(r => { if (r.action === 'like') stats.likes = r.count; if (r.action === 'nope') stats.nopes = r.count; });
 
-        // 2. Top 5 Artiesten
         const artistRes = await db.query("SELECT artist_name, COUNT(*) as count FROM history WHERE username = $1 AND action = 'like' GROUP BY artist_name ORDER BY count DESC LIMIT 5", [user.username]);
-
-        // 3. Laatste 10 gelikete tracks
         const trackRes = await db.query("SELECT track_name, artist_name FROM history WHERE username = $1 AND action = 'like' ORDER BY id DESC LIMIT 10", [user.username]);
 
-        // De HTML response
         res.send(`<!DOCTYPE html>
 <html lang="nl">
 <head>
@@ -276,45 +318,28 @@ app.get('/dashboard', async (req, res) => {
     <main>
         <div class="login-card" style="max-height: 85vh; overflow-y: auto;">
             <h2 class="login-header-main">Lekker bezig, ${user.username}!</h2>
-            
             <div class="stats-row" style="display:flex; justify-content: space-around; margin: 20px 0; border-bottom: 1px solid #eee; padding-bottom: 15px;">
                 <div style="text-align:center;"><strong style="font-size:1.5rem; color:#1DB954;">${stats.likes}</strong><br><small>Likes</small></div>
                 <div style="text-align:center;"><strong style="font-size:1.5rem; color:#fe8777;">${stats.nopes}</strong><br><small>Nopes</small></div>
             </div>
-
             <div style="text-align:left; margin-bottom: 25px;">
-                <h3 style="font-family:'Bebas Neue', sans-serif; color:#fe8777; border-bottom: 2px solid #f0f0f0;">Top 5 Artiesten</h3>
+                <h3 style="font-family:'Bebas Neue'; color:#fe8777; border-bottom: 2px solid #f0f0f0;">Top 5 Artiesten</h3>
                 <ul style="list-style:none; padding:0; margin-top:10px;">
-                    ${artistRes.rows.map(a => `
-                        <li style="display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid #f9f9f9; font-size:1rem;">
-                            <span>${a.artist_name}</span>
-                            <span style="color:#888; font-weight:bold;">${a.count}x</span>
-                        </li>
-                    `).join('') || '<li style="color:#888;">Nog geen artiesten geliket.</li>'}
+                    ${artistRes.rows.map(a => `<li style="display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid #f9f9f9;"><span>${a.artist_name}</span><span style="color:#888;">${a.count}x</span></li>`).join('') || '<li>Nog geen likes</li>'}
                 </ul>
             </div>
-
             <div style="text-align:left;">
-                <h3 style="font-family:'Bebas Neue', sans-serif; color:#fe8777; border-bottom: 2px solid #f0f0f0;">Laatst Geliket</h3>
+                <h3 style="font-family:'Bebas Neue'; color:#fe8777; border-bottom: 2px solid #f0f0f0;">Laatst Geliket</h3>
                 <ul style="list-style:none; padding:0; margin-top:10px;">
-                    ${trackRes.rows.map(t => `
-                        <li style="margin-bottom:12px; border-left: 3px solid #1DB954; padding-left:10px;">
-                            <strong style="font-size:0.95rem; display:block;">${t.track_name}</strong>
-                            <span style="font-size:0.8rem; color:#666;">${t.artist_name}</span>
-                        </li>
-                    `).join('') || '<li style="color:#888;">Nog geen nummers geliket.</li>'}
+                    ${trackRes.rows.map(t => `<li style="margin-bottom:12px; border-left: 3px solid #1DB954; padding-left:10px;"><strong>${t.track_name}</strong><br><small>${t.artist_name}</small></li>`).join('') || '<li>Nog geen nummers</li>'}
                 </ul>
             </div>
-
             <button onclick="window.location.href='/'" class="btn-start" style="margin-top:20px; width:100%;">BACK TO SWIPE</button>
         </div>
     </main>
 </body>
 </html>`);
-    } catch (e) {
-        console.error(e);
-        res.status(500).send("Er ging iets mis bij het laden van je stats.");
-    }
+    } catch (e) { res.status(500).send("Fout bij laden dashboard"); }
 });
 
-app.listen(port, () => console.log(`Feest draait op poort ${port}`));
+app.listen(port, () => console.log(`Feest op poort ${port}`));
