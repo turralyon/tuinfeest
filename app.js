@@ -156,22 +156,18 @@ app.get('/leaderboard', async (req, res) => {
     const isLoggedIn = !!user;
     
     try {
-        // Top likers
         const topLikersRes = await db.query(
             "SELECT username, COUNT(*) as count FROM history WHERE action = 'like' GROUP BY username ORDER BY count DESC LIMIT 10"
         );
         
-        // Strengste jury (meeste nopes)
         const topNopersRes = await db.query(
             "SELECT username, COUNT(*) as count FROM history WHERE action = 'nope' GROUP BY username ORDER BY count DESC LIMIT 10"
         );
         
-        // Favoriete artiesten (meest gelike)
         const topArtistsRes = await db.query(
             "SELECT artist_name, COUNT(*) as count FROM history WHERE action = 'like' GROUP BY artist_name ORDER BY count DESC LIMIT 10"
         );
         
-        // Favoriete genres
         const topGenresRes = await db.query(
             "SELECT genres, COUNT(*) as count FROM history WHERE action = 'like' AND genres != '' GROUP BY genres ORDER BY count DESC LIMIT 50"
         );
@@ -188,7 +184,12 @@ app.get('/leaderboard', async (req, res) => {
         });
         topGenres = Object.entries(genreMap).sort((a, b) => b[1] - a[1]).slice(0, 10);
 
-        res.send(\`<!DOCTYPE html>
+        const topLikersHtml = topLikersRes.rows.map(r => '<li style="padding:5px 0; cursor:pointer;" onclick="window.location.href=' + "'/profile/" + r.username + "'" + '"><strong>' + r.username + '</strong> - ' + r.count + ' likes</li>').join('');
+        const topNopersHtml = topNopersRes.rows.map(r => '<li style="padding:5px 0; cursor:pointer;" onclick="window.location.href=' + "'/profile/" + r.username + "'" + '"><strong>' + r.username + '</strong> - ' + r.count + ' nopes</li>').join('');
+        const topArtistsHtml = topArtistsRes.rows.map(r => '<li style="padding:5px 0;"><strong>' + r.artist_name + '</strong> - ' + r.count + 'x geliked</li>').join('');
+        const topGenresHtml = topGenres.map(g => '<li style="padding:5px 0;"><strong>' + g[0] + '</strong> - ' + g[1] + 'x</li>').join('');
+
+        res.send(`<!DOCTYPE html>
 <html lang="nl">
 <head>
     <meta charset="UTF-8">
@@ -197,35 +198,35 @@ app.get('/leaderboard', async (req, res) => {
 </head>
 <body>
     <header>
-        <div class="user-menu">\${isLoggedIn ? '<a href="/" class="nav-link">SWIPE</a>' : ''}</div>
+        <div class="user-menu">${isLoggedIn ? '<a href="/" class="nav-link">SWIPE</a>' : ''}</div>
         <h1>🏆 Leaderboard</h1>
-        <div class="user-menu">\${isLoggedIn ? '<a href="/logout" class="logout-link">LOGUIT</a>' : '<a href="/" class="nav-link">LOGIN</a>'}</div>
+        <div class="user-menu">${isLoggedIn ? '<a href="/logout" class="logout-link">LOGUIT</a>' : '<a href="/" class="nav-link">LOGIN</a>'}</div>
     </header>
     <main>
         <div class="login-card" style="max-height: 90vh; overflow-y: auto;">
             <h3 style="color:#1DB954; margin-top:0;">👍 Top Likers</h3>
             <ol style="padding-left:20px;">
-                \${topLikersRes.rows.map(r => \`<li style="padding:5px 0; cursor:pointer;" onclick="window.location.href='/profile/\${r.username}'"><strong>\${r.username}</strong> - \${r.count} likes</li>\`).join('')}
+                ${topLikersHtml}
             </ol>
             
             <h3 style="color:#fe8777; margin-top:30px;">👎 Strengste Jury</h3>
             <ol style="padding-left:20px;">
-                \${topNopersRes.rows.map(r => \`<li style="padding:5px 0; cursor:pointer;" onclick="window.location.href='/profile/\${r.username}'"><strong>\${r.username}</strong> - \${r.count} nopes</li>\`).join('')}
+                ${topNopersHtml}
             </ol>
             
             <h3 style="color:#FFA500; margin-top:30px;">🎤 Favoriete Artiesten</h3>
             <ol style="padding-left:20px;">
-                \${topArtistsRes.rows.map(r => \`<li style="padding:5px 0;"><strong>\${r.artist_name}</strong> - \${r.count}x geliked</li>\`).join('')}
+                ${topArtistsHtml}
             </ol>
             
             <h3 style="color:#9B59B6; margin-top:30px;">🎵 Favoriete Genres</h3>
             <ol style="padding-left:20px;">
-                \${topGenres.map(g => \`<li style="padding:5px 0;"><strong>\${g[0]}</strong> - \${g[1]}x</li>\`).join('')}
+                ${topGenresHtml}
             </ol>
         </div>
     </main>
 </body>
-</html>\`);
+</html>`);
     } catch (e) { res.status(500).send("Fout bij laden leaderboard"); }
 });
 
@@ -237,7 +238,6 @@ app.get('/profile/:username', async (req, res) => {
     const profileUsername = req.params.username;
     
     try {
-        // Check if user exists
         const userRes = await db.query('SELECT id FROM users WHERE username = $1', [profileUsername]);
         if (userRes.rows.length === 0) return res.status(404).send("Gebruiker niet gevonden");
         
@@ -259,49 +259,51 @@ app.get('/profile/:username', async (req, res) => {
         });
         topGenres = Object.entries(topGenres).sort((a, b) => b[1] - a[1]).slice(0, 3);
 
-        res.send(\`<!DOCTYPE html>
+        const artistsHtml = artistRes.rows.length > 0 
+            ? '<ul style="list-style:none; padding:0;">' + artistRes.rows.map(a => '<li style="display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid #f9f9f9;"><span>' + a.artist_name + '</span><span style="color:#888;">' + a.count + 'x</span></li>').join('') + '</ul>'
+            : '<p>Nog geen favoriete artiesten</p>';
+        
+        const genresHtml = topGenres.length > 0
+            ? '<ul style="list-style:none; padding:0;">' + topGenres.map(g => '<li style="display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid #f9f9f9;"><span>' + g[0] + '</span><span style="color:#888;">' + g[1] + 'x</span></li>').join('') + '</ul>'
+            : '<p>Nog geen genres</p>';
+
+        res.send(`<!DOCTYPE html>
 <html lang="nl">
 <head>
     <meta charset="UTF-8">
-    <title>Profiel - \${profileUsername}</title>
+    <title>Profiel - ${profileUsername}</title>
     <link rel="stylesheet" href="/style.css">
 </head>
 <body>
     <header>
         <div class="user-menu"><a href="/leaderboard" class="nav-link">← LEADERBOARD</a></div>
-        <h1>🎶 \${profileUsername}</h1>
-        <div class="user-menu">\${isLoggedIn ? '<a href="/logout" class="logout-link">LOGUIT</a>' : ''}</div>
+        <h1>🎶 ${profileUsername}</h1>
+        <div class="user-menu">${isLoggedIn ? '<a href="/logout" class="logout-link">LOGUIT</a>' : ''}</div>
     </header>
     <main>
         <div class="login-card" style="max-height: 90vh; overflow-y: auto;">
             <div class="stats-row" style="display:flex; justify-content: space-around; margin: 20px 0; border-bottom: 1px solid #eee; padding-bottom: 15px;">
                 <div style="text-align:center;">
-                    <strong style="font-size:2rem; color:#1DB954;">\${stats.likes}</strong><br>
+                    <strong style="font-size:2rem; color:#1DB954;">${stats.likes}</strong><br>
                     <small>Likes</small>
                 </div>
                 <div style="text-align:center;">
-                    <strong style="font-size:2rem; color:#fe8777;">\${stats.nopes}</strong><br>
+                    <strong style="font-size:2rem; color:#fe8777;">${stats.nopes}</strong><br>
                     <small>Nopes</small>
                 </div>
             </div>
             
             <h3 style="color:#1DB954;">🎤 Top Artiesten</h3>
-            \${artistRes.rows.length > 0 ? \`
-            <ul style="list-style:none; padding:0;">
-                \${artistRes.rows.map(a => \`<li style="display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid #f9f9f9;"><span>\${a.artist_name}</span><span style="color:#888;">\${a.count}x</span></li>\`).join('')}
-            </ul>\` : '<p>Nog geen favoriete artiesten</p>'}
+            ${artistsHtml}
             
             <h3 style="color:#9B59B6; margin-top:25px;">🎵 Favoriete Genres</h3>
-            \${topGenres.length > 0 ? \`
-            <ul style="list-style:none; padding:0;">
-                \${topGenres.map(g => \`<li style="display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid #f9f9f9;"><span>\${g[0]}</span><span style="color:#888;">\${g[1]}x</span></li>\`).join('')}
-            </ul>\` : '<p>Nog geen genres</p>'}
+            ${genresHtml}
             
             <button onclick="window.location.href='/leaderboard'" class="btn-start" style="width:100%; margin-top:25px;">TERUG</button>
         </div>
     </main>
 </body>
-</html>\`);
+</html>`);
     } catch (e) { res.status(500).send("Fout bij laden profiel"); }
 });
 
