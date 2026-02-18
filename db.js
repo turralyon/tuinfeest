@@ -1,4 +1,5 @@
 const { Pool } = require('pg');
+const bcrypt = require('bcrypt');
 require('dotenv').config();
 
 const pool = new Pool({
@@ -52,9 +53,20 @@ const initDb = async () => {
       ];
 
       for (const [user, pass] of defaultUsers) {
-        await client.query('INSERT INTO users (username, password) VALUES ($1, $2) ON CONFLICT DO NOTHING', [user, pass]);
+        const hashedPass = await bcrypt.hash(pass, 10);
+        await client.query('INSERT INTO users (username, password) VALUES ($1, $2) ON CONFLICT DO NOTHING', [user, hashedPass]);
       }
       console.log("✅ Gastenlijst succesvol geïmporteerd naar Neon!");
+    } else {
+      // Upgrade plaintext passwords to bcrypt hashes
+      const plainUsers = await client.query('SELECT id, password FROM users WHERE password NOT LIKE $1', ['$2%']);
+      for (const user of plainUsers.rows) {
+        const hashedPass = await bcrypt.hash(user.password, 10);
+        await client.query('UPDATE users SET password = $1 WHERE id = $2', [hashedPass, user.id]);
+      }
+      if (plainUsers.rows.length > 0) {
+        console.log(`✅ ${plainUsers.rows.length} wachtwoorden gehashed naar bcrypt`);
+      }
     }
   } catch (err) {
     console.error("❌ Database Error:", err.message);

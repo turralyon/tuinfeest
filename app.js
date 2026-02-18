@@ -123,7 +123,7 @@ app.post('/api/login', async (req, res) => {
         const result = await db.query('SELECT * FROM users WHERE username = $1', [username]);
         const user = result.rows[0];
         if (!user) return res.json({ ok: false });
-        let isMatch = await bcrypt.compare(password, user.password).catch(() => password === user.password);
+        const isMatch = await bcrypt.compare(password, user.password);
         if (isMatch) {
             const token = uuidv4();
             await db.query('UPDATE users SET token = $1 WHERE id = $2', [token, user.id]);
