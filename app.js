@@ -151,6 +151,27 @@ app.get('/logout', (req, res) => { res.clearCookie('user_auth'); res.redirect('/
 
 // --- LEADERBOARD ---
 
+app.get('/api/search-users', async (req, res) => {
+    const query = req.query.q;
+    if (!query || query.length < 1) return res.json({ users: [] });
+    
+    try {
+        const result = await db.query('SELECT username FROM users WHERE username ILIKE $1 LIMIT 10', ['%' + query + '%']);
+        const users = [];
+        
+        for (const user of result.rows) {
+            const countRes = await db.query("SELECT action, COUNT(*) as count FROM history WHERE username = $1 GROUP BY action", [user.username]);
+            let stats = { likes: 0, nopes: 0 };
+            countRes.rows.forEach(r => { if (r.action === 'like') stats.likes = r.count; if (r.action === 'nope') stats.nopes = r.count; });
+            users.push({ username: user.username, stats });
+        }
+        
+        res.json({ users });
+    } catch (e) { res.status(500).json({ users: [] }); }
+});
+
+// --- LEADERBOARD ---
+
 app.get('/leaderboard', async (req, res) => {
     const user = await getActiveUser(req);
     const isLoggedIn = !!user;
@@ -184,17 +205,31 @@ app.get('/leaderboard', async (req, res) => {
         });
         topGenres = Object.entries(genreMap).sort((a, b) => b[1] - a[1]).slice(0, 10);
 
-        const topLikersHtml = topLikersRes.rows.map(r => '<li style="padding:5px 0; cursor:pointer;" onclick="window.location.href=' + "'/profile/" + r.username + "'" + '"><strong>' + r.username + '</strong> - ' + r.count + ' likes</li>').join('');
-        const topNopersHtml = topNopersRes.rows.map(r => '<li style="padding:5px 0; cursor:pointer;" onclick="window.location.href=' + "'/profile/" + r.username + "'" + '"><strong>' + r.username + '</strong> - ' + r.count + ' nopes</li>').join('');
-        const topArtistsHtml = topArtistsRes.rows.map(r => '<li style="padding:5px 0;"><strong>' + r.artist_name + '</strong> - ' + r.count + 'x geliked</li>').join('');
-        const topGenresHtml = topGenres.map(g => '<li style="padding:5px 0;"><strong>' + g[0] + '</strong> - ' + g[1] + 'x</li>').join('');
+        const topLikersHtml = topLikersRes.rows.map(r => '<li style="padding:10px 0; cursor:pointer; border-bottom:1px solid #eee;" onclick="window.location.href=' + "'/profile/" + r.username + "'" + '"><strong style="color:#1DB954;">' + r.username + '</strong><br><small>' + r.count + ' likes</small></li>').join('');
+        const topNopersHtml = topNopersRes.rows.map(r => '<li style="padding:10px 0; cursor:pointer; border-bottom:1px solid #eee;" onclick="window.location.href=' + "'/profile/" + r.username + "'" + '"><strong style="color:#fe8777;">' + r.username + '</strong><br><small>' + r.count + ' nopes</small></li>').join('');
+        const topArtistsHtml = topArtistsRes.rows.map(r => '<li style="padding:10px 0; border-bottom:1px solid #eee;"><strong>' + r.artist_name + '</strong><br><small>' + r.count + 'x geliked</small></li>').join('');
+        const topGenresHtml = topGenres.map(g => '<li style="padding:10px 0; border-bottom:1px solid #eee;"><strong>' + g[0] + '</strong><br><small>' + g[1] + 'x</small></li>').join('');
 
         res.send(`<!DOCTYPE html>
 <html lang="nl">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Leaderboard</title>
     <link rel="stylesheet" href="/style.css">
+    <style>
+        .tabs { display: flex; gap: 5px; margin-bottom: 15px; flex-wrap: wrap; }
+        .tab-btn { flex: 1; min-width: 45%; padding: 8px; background: #eee; border: none; cursor: pointer; border-radius: 8px; font-weight: bold; }
+        .tab-btn.active { background: #1DB954; color: white; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        .search-box { width: 100%; padding: 10px; margin-bottom: 15px; border: 2px solid #1DB954; border-radius: 8px; font-size: 1rem; }
+        @media (max-width: 600px) {
+            .tab-btn { min-width: calc(50% - 3px); padding: 6px; font-size: 0.85rem; }
+            ol { padding-left: 15px; margin: 0; }
+            li { padding: 8px 0 !important; }
+        }
+    </style>
 </head>
 <body>
     <header>
@@ -204,27 +239,86 @@ app.get('/leaderboard', async (req, res) => {
     </header>
     <main>
         <div class="login-card" style="max-height: 90vh; overflow-y: auto;">
-            <h3 style="color:#1DB954; margin-top:0;">👍 Top Likers</h3>
-            <ol style="padding-left:20px;">
-                ${topLikersHtml}
-            </ol>
+            <input type="text" class="search-box" id="searchInput" placeholder="🔍 Zoek gebruiker..." onkeyup="searchUsers()">
             
-            <h3 style="color:#fe8777; margin-top:30px;">👎 Strengste Jury</h3>
-            <ol style="padding-left:20px;">
-                ${topNopersHtml}
-            </ol>
+            <div class="tabs">
+                <button class="tab-btn active" onclick="switchTab('likers')">👍 Likers</button>
+                <button class="tab-btn" onclick="switchTab('nopers')">👎 Jury</button>
+                <button class="tab-btn" onclick="switchTab('artists')">🎤 Artiesten</button>
+                <button class="tab-btn" onclick="switchTab('genres')">🎵 Genres</button>
+            </div>
             
-            <h3 style="color:#FFA500; margin-top:30px;">🎤 Favoriete Artiesten</h3>
-            <ol style="padding-left:20px;">
-                ${topArtistsHtml}
-            </ol>
+            <div id="likers" class="tab-content active">
+                <ol style="list-style: decimal; padding-left: 20px; margin: 0;">
+                    ${topLikersHtml}
+                </ol>
+            </div>
             
-            <h3 style="color:#9B59B6; margin-top:30px;">🎵 Favoriete Genres</h3>
-            <ol style="padding-left:20px;">
-                ${topGenresHtml}
-            </ol>
+            <div id="nopers" class="tab-content">
+                <ol style="list-style: decimal; padding-left: 20px; margin: 0;">
+                    ${topNopersHtml}
+                </ol>
+            </div>
+            
+            <div id="artists" class="tab-content">
+                <ol style="list-style: decimal; padding-left: 20px; margin: 0;">
+                    ${topArtistsHtml}
+                </ol>
+            </div>
+            
+            <div id="genres" class="tab-content">
+                <ol style="list-style: decimal; padding-left: 20px; margin: 0;">
+                    ${topGenresHtml}
+                </ol>
+            </div>
+            
+            <div id="searchResults" class="tab-content" style="display: none;">
+                <ol id="resultsList" style="list-style: decimal; padding-left: 20px; margin: 0;"></ol>
+            </div>
         </div>
     </main>
+    
+    <script>
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.getElementById(tabName).classList.add('active');
+            event.target.classList.add('active');
+            document.getElementById('searchInput').value = '';
+        }
+        
+        async function searchUsers() {
+            const query = document.getElementById('searchInput').value.trim();
+            const resultsDiv = document.getElementById('searchResults');
+            const resultsList = document.getElementById('resultsList');
+            
+            if (query.length === 0) {
+                resultsDiv.style.display = 'none';
+                return;
+            }
+            
+            try {
+                const r = await fetch('/api/search-users?q=' + encodeURIComponent(query));
+                const data = await r.json();
+                
+                if (data.users && data.users.length > 0) {
+                    resultsList.innerHTML = data.users.map(u => 
+                        '<li style="padding:10px 0; cursor:pointer; border-bottom:1px solid #eee;" onclick="window.location.href=' + "'/profile/" + u.username + "'" + '"><strong style="color:#1DB954;">' + u.username + '</strong><br><small>' + u.stats.likes + ' likes, ' + u.stats.nopes + ' nopes</small></li>'
+                    ).join('');
+                    resultsDiv.style.display = 'block';
+                    document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+                    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+                    resultsDiv.classList.add('active');
+                } else {
+                    resultsList.innerHTML = '<li style="padding:10px;">Geen gebruikers gevonden</li>';
+                    resultsDiv.style.display = 'block';
+                }
+            } catch (e) {
+                resultsList.innerHTML = '<li style="padding:10px; color:red;">Zoekfout</li>';
+                resultsDiv.style.display = 'block';
+            }
+        }
+    </script>
 </body>
 </html>`);
     } catch (e) { res.status(500).send("Fout bij laden leaderboard"); }
