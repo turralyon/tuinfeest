@@ -177,14 +177,12 @@ app.get('/leaderboard', async (req, res) => {
     const isLoggedIn = !!user;
     
     try {
-        // Alle gebruikers met hun likes
-        const allLikersRes = await db.query(
-            "SELECT u.username, COALESCE(COUNT(CASE WHEN h.action = 'like' THEN 1 END), 0) as count FROM users u LEFT JOIN history h ON u.username = h.username GROUP BY u.username ORDER BY count DESC"
+        const topLikersRes = await db.query(
+            "SELECT username, COUNT(*) as count FROM history WHERE action = 'like' GROUP BY username ORDER BY count DESC LIMIT 10"
         );
         
-        // Alle gebruikers met hun nopes
-        const allNopersRes = await db.query(
-            "SELECT u.username, COALESCE(COUNT(CASE WHEN h.action = 'nope' THEN 1 END), 0) as count FROM users u LEFT JOIN history h ON u.username = h.username GROUP BY u.username ORDER BY count DESC"
+        const topNopersRes = await db.query(
+            "SELECT username, COUNT(*) as count FROM history WHERE action = 'nope' GROUP BY username ORDER BY count DESC LIMIT 10"
         );
         
         const topArtistsRes = await db.query(
@@ -207,8 +205,8 @@ app.get('/leaderboard', async (req, res) => {
         });
         topGenres = Object.entries(genreMap).sort((a, b) => b[1] - a[1]).slice(0, 10);
 
-        const topLikersHtml = allLikersRes.rows.map(r => '<li style="padding:10px 0; cursor:pointer; border-bottom:1px solid #eee;" onclick="window.location.href=' + "'/profile/" + r.username + "'" + '"><strong style="color:#1DB954;">' + r.username + '</strong><br><small>' + r.count + ' likes</small></li>').join('');
-        const topNopersHtml = allNopersRes.rows.map(r => '<li style="padding:10px 0; cursor:pointer; border-bottom:1px solid #eee;" onclick="window.location.href=' + "'/profile/" + r.username + "'" + '"><strong style="color:#fe8777;">' + r.username + '</strong><br><small>' + r.count + ' nopes</small></li>').join('');
+        const topLikersHtml = topLikersRes.rows.map(r => '<li style="padding:10px 0; cursor:pointer; border-bottom:1px solid #eee;" onclick="window.location.href=' + "'/profile/" + r.username + "'" + '"><strong style="color:#1DB954;">' + r.username + '</strong><br><small>' + r.count + ' likes</small></li>').join('');
+        const topNopersHtml = topNopersRes.rows.map(r => '<li style="padding:10px 0; cursor:pointer; border-bottom:1px solid #eee;" onclick="window.location.href=' + "'/profile/" + r.username + "'" + '"><strong style="color:#fe8777;">' + r.username + '</strong><br><small>' + r.count + ' nopes</small></li>').join('');
         const topArtistsHtml = topArtistsRes.rows.map(r => '<li style="padding:10px 0; border-bottom:1px solid #eee;"><strong>' + r.artist_name + '</strong><br><small>' + r.count + 'x geliked</small></li>').join('');
         const topGenresHtml = topGenres.map(g => '<li style="padding:10px 0; border-bottom:1px solid #eee;"><strong>' + g[0] + '</strong><br><small>' + g[1] + 'x</small></li>').join('');
 
@@ -245,7 +243,7 @@ app.get('/leaderboard', async (req, res) => {
             
             <div class="tabs">
                 <button class="tab-btn active" onclick="switchTab('likers')">👍 Likers</button>
-                <button class="tab-btn" onclick="switchTab('nopers')">👎 Critici</button>
+                <button class="tab-btn" onclick="switchTab('nopers')">👎 Jury</button>
                 <button class="tab-btn" onclick="switchTab('artists')">🎤 Artiesten</button>
                 <button class="tab-btn" onclick="switchTab('genres')">🎵 Genres</button>
             </div>
@@ -367,27 +365,8 @@ app.get('/profile/:username', async (req, res) => {
 <html lang="nl">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Profiel - ${profileUsername}</title>
     <link rel="stylesheet" href="/style.css">
-    <style>
-        .stats-row { display: flex; justify-content: space-around; margin: 20px 0; border-bottom: 1px solid #eee; padding-bottom: 15px; }
-        .stats-row > div { text-align: center; flex: 1; }
-        .stats-row strong { font-size: 2.5rem; display: block; margin-bottom: 5px; }
-        .stats-row small { font-size: 0.9rem; color: #666; }
-        .artist-list, .genre-list { list-style: none; padding: 0; margin: 15px 0; }
-        .artist-list li, .genre-list li { display: flex; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid #f9f9f9; font-size: 1.1rem; }
-        .artist-list li span:first-child, .genre-list li span:first-child { font-weight: bold; color: #333; }
-        .artist-list li span:last-child, .genre-list li span:last-child { color: #888; font-size: 0.9rem; }
-        .no-data { color: #999; font-style: italic; padding: 20px 0; text-align: center; }
-        .back-btn { width: 100%; margin-top: 25px; padding: 15px; background: #1DB954; color: white; border: none; border-radius: 25px; font-size: 1.1rem; cursor: pointer; }
-        @media (max-width: 600px) {
-            .stats-row strong { font-size: 2rem; }
-            .stats-row { flex-direction: column; gap: 15px; }
-            .stats-row > div { margin-bottom: 10px; }
-            .artist-list li, .genre-list li { padding: 15px 0; font-size: 1.2rem; }
-        }
-    </style>
 </head>
 <body>
     <header>
@@ -397,24 +376,24 @@ app.get('/profile/:username', async (req, res) => {
     </header>
     <main>
         <div class="login-card" style="max-height: 90vh; overflow-y: auto;">
-            <div class="stats-row">
-                <div>
-                    <strong style="color:#1DB954;">${stats.likes}</strong>
+            <div class="stats-row" style="display:flex; justify-content: space-around; margin: 20px 0; border-bottom: 1px solid #eee; padding-bottom: 15px;">
+                <div style="text-align:center;">
+                    <strong style="font-size:2rem; color:#1DB954;">${stats.likes}</strong><br>
                     <small>Likes</small>
                 </div>
-                <div>
-                    <strong style="color:#fe8777;">${stats.nopes}</strong>
+                <div style="text-align:center;">
+                    <strong style="font-size:2rem; color:#fe8777;">${stats.nopes}</strong><br>
                     <small>Nopes</small>
                 </div>
             </div>
             
-            <h3 style="color:#1DB954; margin-bottom: 15px;">🎤 Top Artiesten</h3>
+            <h3 style="color:#1DB954;">🎤 Top Artiesten</h3>
             ${artistsHtml}
             
-            <h3 style="color:#9B59B6; margin-top: 30px; margin-bottom: 15px;">🎵 Favoriete Genres</h3>
+            <h3 style="color:#9B59B6; margin-top:25px;">🎵 Favoriete Genres</h3>
             ${genresHtml}
             
-            <button onclick="window.location.href='/leaderboard'" class="back-btn">TERUG NAAR LEADERBOARD</button>
+            <button onclick="window.location.href='/leaderboard'" class="btn-start" style="width:100%; margin-top:25px;">TERUG</button>
         </div>
     </main>
 </body>
