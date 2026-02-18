@@ -48,6 +48,12 @@ app.get('/api/tracks', async (req, res) => {
         const viewed = new Set(history.filter(h => h.username === user.username).map(h => h.track_id));
         const artistBans = new Set(history.filter(h => h.track_id === 'BAN_ARTIST').map(h => h.action.toLowerCase()));
         
+        // Get tracks already in target playlist
+        const targetPlaylist = await axios.get(`https://api.spotify.com/v1/playlists/${process.env.SPOTIFY_TARGET_PLAYLIST_ID}/tracks?fields=items(track(id))`, {
+            headers: { Authorization: `Bearer ${token}` }
+        });
+        const inPlaylist = new Set(targetPlaylist.data.items.map(i => i.track?.id));
+        
         const playlistInfo = await axios.get(`https://api.spotify.com/v1/playlists/${process.env.SPOTIFY_SOURCE_PLAYLIST_ID}?fields=tracks.total`, {
             headers: { Authorization: `Bearer ${token}` }
         });
@@ -59,7 +65,7 @@ app.get('/api/tracks', async (req, res) => {
             headers: { Authorization: `Bearer ${token}` }
         });
 
-        let candidates = resp.data.items.map(i => i.track).filter(t => t && t.id && !viewed.has(t.id) && !artistBans.has(t.artists[0].name.toLowerCase()));
+        let candidates = resp.data.items.map(i => i.track).filter(t => t && t.id && !viewed.has(t.id) && !inPlaylist.has(t.id) && !artistBans.has(t.artists[0].name.toLowerCase()));
 
         const genreScores = {};
         history.filter(h => h.action === 'like' && h.username === user.username).forEach(h => {
@@ -88,11 +94,20 @@ app.post('/api/interact', async (req, res) => {
         const token = await refreshIfNeeded();
         let genresStr = "";
         if (action === 'like') {
-            const genres = await getArtistGenres(artist_id, token);
-            genresStr = genres.join(',');
-            await axios.post(`https://api.spotify.com/v1/playlists/${process.env.SPOTIFY_TARGET_PLAYLIST_ID}/tracks`, { uris: [uri] }, {
+            // Check if track already exists in target playlist
+            const targetPlaylist = await axios.get(`https://api.spotify.com/v1/playlists/${process.env.SPOTIFY_TARGET_PLAYLIST_ID}/tracks?fields=items(track(id))`, {
                 headers: { Authorization: `Bearer ${token}` }
             });
+            const existingIds = new Set(targetPlaylist.data.items.map(i => i.track?.id));
+            
+            // Only add if not already in playlist
+            if (!existingIds.has(track_id)) {
+                const genres = await getArtistGenres(artist_id, token);
+                genresStr = genres.join(',');
+                await axios.post(`https://api.spotify.com/v1/playlists/${process.env.SPOTIFY_TARGET_PLAYLIST_ID}/tracks`, { uris: [uri] }, {
+                    headers: { Authorization: `Bearer ${token}` }
+                });
+            }
         }
         await db.query('INSERT INTO history (username, track_id, action, track_name, artist_name, genres) VALUES ($1, $2, $3, $4, $5, $6)', 
             [user.username, track_id, action, track_name, artist_name, genresStr]);
@@ -134,6 +149,162 @@ app.post('/api/reset-password', async (req, res) => {
 
 app.get('/logout', (req, res) => { res.clearCookie('user_auth'); res.redirect('/'); });
 
+// --- LEADERBOARD ---
+
+app.get('/leaderboard', async (req, res) => {
+    const user = await getActiveUser(req);
+    const isLoggedIn = !!user;
+    
+    try {
+        // Top likers
+        const topLikersRes = await db.query(
+            "SELECT username, COUNT(*) as count FROM history WHERE action = 'like' GROUP BY username ORDER BY count DESC LIMIT 10"
+        );
+        
+        // Strengste jury (meeste nopes)
+        const topNopersRes = await db.query(
+            "SELECT username, COUNT(*) as count FROM history WHERE action = 'nope' GROUP BY username ORDER BY count DESC LIMIT 10"
+        );
+        
+        // Favoriete artiesten (meest gelike)
+        const topArtistsRes = await db.query(
+            "SELECT artist_name, COUNT(*) as count FROM history WHERE action = 'like' GROUP BY artist_name ORDER BY count DESC LIMIT 10"
+        );
+        
+        // Favoriete genres
+        const topGenresRes = await db.query(
+            "SELECT genres, COUNT(*) as count FROM history WHERE action = 'like' AND genres != '' GROUP BY genres ORDER BY count DESC LIMIT 50"
+        );
+        
+        let topGenres = [];
+        const genreMap = {};
+        topGenresRes.rows.forEach(row => {
+            if (row.genres) {
+                row.genres.split(',').forEach(g => {
+                    const genre = g.trim();
+                    if (genre) genreMap[genre] = (genreMap[genre] || 0) + row.count;
+                });
+            }
+        });
+        topGenres = Object.entries(genreMap).sort((a, b) => b[1] - a[1]).slice(0, 10);
+
+        res.send(\`<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <title>Leaderboard</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <header>
+        <div class="user-menu">\${isLoggedIn ? '<a href="/" class="nav-link">SWIPE</a>' : ''}</div>
+        <h1>🏆 Leaderboard</h1>
+        <div class="user-menu">\${isLoggedIn ? '<a href="/logout" class="logout-link">LOGUIT</a>' : '<a href="/" class="nav-link">LOGIN</a>'}</div>
+    </header>
+    <main>
+        <div class="login-card" style="max-height: 90vh; overflow-y: auto;">
+            <h3 style="color:#1DB954; margin-top:0;">👍 Top Likers</h3>
+            <ol style="padding-left:20px;">
+                \${topLikersRes.rows.map(r => \`<li style="padding:5px 0; cursor:pointer;" onclick="window.location.href='/profile/\${r.username}'"><strong>\${r.username}</strong> - \${r.count} likes</li>\`).join('')}
+            </ol>
+            
+            <h3 style="color:#fe8777; margin-top:30px;">👎 Strengste Jury</h3>
+            <ol style="padding-left:20px;">
+                \${topNopersRes.rows.map(r => \`<li style="padding:5px 0; cursor:pointer;" onclick="window.location.href='/profile/\${r.username}'"><strong>\${r.username}</strong> - \${r.count} nopes</li>\`).join('')}
+            </ol>
+            
+            <h3 style="color:#FFA500; margin-top:30px;">🎤 Favoriete Artiesten</h3>
+            <ol style="padding-left:20px;">
+                \${topArtistsRes.rows.map(r => \`<li style="padding:5px 0;"><strong>\${r.artist_name}</strong> - \${r.count}x geliked</li>\`).join('')}
+            </ol>
+            
+            <h3 style="color:#9B59B6; margin-top:30px;">🎵 Favoriete Genres</h3>
+            <ol style="padding-left:20px;">
+                \${topGenres.map(g => \`<li style="padding:5px 0;"><strong>\${g[0]}</strong> - \${g[1]}x</li>\`).join('')}
+            </ol>
+        </div>
+    </main>
+</body>
+</html>\`);
+    } catch (e) { res.status(500).send("Fout bij laden leaderboard"); }
+});
+
+// --- USER PROFILE ---
+
+app.get('/profile/:username', async (req, res) => {
+    const user = await getActiveUser(req);
+    const isLoggedIn = !!user;
+    const profileUsername = req.params.username;
+    
+    try {
+        // Check if user exists
+        const userRes = await db.query('SELECT id FROM users WHERE username = $1', [profileUsername]);
+        if (userRes.rows.length === 0) return res.status(404).send("Gebruiker niet gevonden");
+        
+        const countRes = await db.query("SELECT action, COUNT(*) as count FROM history WHERE username = $1 GROUP BY action", [profileUsername]);
+        let stats = { likes: 0, nopes: 0 };
+        countRes.rows.forEach(r => { if (r.action === 'like') stats.likes = r.count; if (r.action === 'nope') stats.nopes = r.count; });
+        
+        const artistRes = await db.query("SELECT artist_name, COUNT(*) as count FROM history WHERE username = $1 AND action = 'like' GROUP BY artist_name ORDER BY count DESC LIMIT 5", [profileUsername]);
+        
+        const genreRes = await db.query("SELECT genres FROM history WHERE username = $1 AND action = 'like' AND genres != ''", [profileUsername]);
+        let topGenres = {};
+        genreRes.rows.forEach(row => {
+            if (row.genres) {
+                row.genres.split(',').forEach(g => {
+                    const genre = g.trim();
+                    if (genre) topGenres[genre] = (topGenres[genre] || 0) + 1;
+                });
+            }
+        });
+        topGenres = Object.entries(topGenres).sort((a, b) => b[1] - a[1]).slice(0, 3);
+
+        res.send(\`<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <title>Profiel - \${profileUsername}</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <header>
+        <div class="user-menu"><a href="/leaderboard" class="nav-link">← LEADERBOARD</a></div>
+        <h1>🎶 \${profileUsername}</h1>
+        <div class="user-menu">\${isLoggedIn ? '<a href="/logout" class="logout-link">LOGUIT</a>' : ''}</div>
+    </header>
+    <main>
+        <div class="login-card" style="max-height: 90vh; overflow-y: auto;">
+            <div class="stats-row" style="display:flex; justify-content: space-around; margin: 20px 0; border-bottom: 1px solid #eee; padding-bottom: 15px;">
+                <div style="text-align:center;">
+                    <strong style="font-size:2rem; color:#1DB954;">\${stats.likes}</strong><br>
+                    <small>Likes</small>
+                </div>
+                <div style="text-align:center;">
+                    <strong style="font-size:2rem; color:#fe8777;">\${stats.nopes}</strong><br>
+                    <small>Nopes</small>
+                </div>
+            </div>
+            
+            <h3 style="color:#1DB954;">🎤 Top Artiesten</h3>
+            \${artistRes.rows.length > 0 ? \`
+            <ul style="list-style:none; padding:0;">
+                \${artistRes.rows.map(a => \`<li style="display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid #f9f9f9;"><span>\${a.artist_name}</span><span style="color:#888;">\${a.count}x</span></li>\`).join('')}
+            </ul>\` : '<p>Nog geen favoriete artiesten</p>'}
+            
+            <h3 style="color:#9B59B6; margin-top:25px;">🎵 Favoriete Genres</h3>
+            \${topGenres.length > 0 ? \`
+            <ul style="list-style:none; padding:0;">
+                \${topGenres.map(g => \`<li style="display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid #f9f9f9;"><span>\${g[0]}</span><span style="color:#888;">\${g[1]}x</span></li>\`).join('')}
+            </ul>\` : '<p>Nog geen genres</p>'}
+            
+            <button onclick="window.location.href='/leaderboard'" class="btn-start" style="width:100%; margin-top:25px;">TERUG</button>
+        </div>
+    </main>
+</body>
+</html>\`);
+    } catch (e) { res.status(500).send("Fout bij laden profiel"); }
+});
+
 // --- MAIN PAGE ---
 
 app.get('/', async (req, res) => {
@@ -151,9 +322,9 @@ app.get('/', async (req, res) => {
 <body>
     <div id="toastContainer"></div>
     <header>
-        <div class="user-menu">${showSwipe ? '<a href="/dashboard" class="nav-link">MIJN STATS</a>' : ''}</div>
+        <div class="user-menu">${showSwipe ? '<a href="/leaderboard" class="nav-link">🏆</a>' : ''}</div>
         <h1>Tuinfeest Swipe 🎶</h1>
-        <div class="user-menu">${showSwipe ? '<a href="/logout" class="logout-link">LOGUIT</a>' : ''}</div>
+        <div class="user-menu">${showSwipe ? '<a href="/dashboard" class="nav-link">👤</a>' : ''}</div>
     </header>
     <main>
         ${!showSwipe ? `
@@ -188,6 +359,7 @@ app.get('/', async (req, res) => {
             <div class="controls">
                 <button class="circle-btn btn-nope" onclick="handleSwipe('nope')">✖</button>
                 <button class="circle-btn btn-like" onclick="handleSwipe('like')">❤</button>
+                <button onclick="window.location.href='/logout'" style="position:absolute; bottom:20px; right:20px; padding:8px 15px; background:#fe8777; border:none; border-radius:20px; color:white; cursor:pointer; font-size:0.8rem;">loguit</button>
             </div>
         `}
     </main>
@@ -369,7 +541,10 @@ app.get('/dashboard', async (req, res) => {
                     ${artistRes.rows.map(a => `<li style="display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid #f9f9f9;"><span>${a.artist_name}</span><span style="color:#888;">${a.count}x</span></li>`).join('') || '<li>Nog geen likes</li>'}
                 </ul>
             </div>
-            <button onclick="window.location.href='/'" class="btn-start" style="width:100%;">BACK TO SWIPE</button>
+            <div style="text-align:center; margin-top:20px; padding-top:20px; border-top:1px solid #eee;">
+                <button onclick="window.location.href='/leaderboard'" class="btn-start" style="margin-right:10px;">LEADERBOARD</button>
+                <button onclick="window.location.href='/logout'" class="logout-link" style="padding:10px 20px; background:#fe8777; border:none; cursor:pointer; border-radius:25px; color:white;">LOGUIT</button>
+            </div>
         </div>
     </main>
 </body>
