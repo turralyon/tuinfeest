@@ -6,6 +6,7 @@ const axios = require('axios');
 const bcrypt = require('bcrypt');
 const db = require('./db');
 const { refreshIfNeeded } = require('./spotifyService');
+const { spawn } = require('child_process');
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -363,6 +364,84 @@ app.get('/leaderboard', async (req, res) => {
 </body>
 </html>`);
     } catch (e) { res.status(500).send("Fout bij laden leaderboard"); }
+});
+
+// --- ADMIN: trigger backfill (starts detached process) ---
+app.get('/admin/backfill', async (req, res) => {
+    const user = await getActiveUser(req);
+    if (!user || user.username !== 'admin') return res.status(403).send('Forbidden');
+
+    res.send(`<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Admin Backfill</title>
+    <link rel="stylesheet" href="/style.css">
+    <style>
+        .admin-card { max-width: 420px; margin: 40px auto; padding: 20px; border-radius: 12px; background: white; color: #333; }
+        .admin-card input { width: 100%; padding: 10px; margin-bottom: 10px; }
+        .admin-card button { padding: 10px 15px; border-radius: 8px; }
+        .status { margin-top: 10px; font-size: 0.95rem; }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="user-menu"><a href="/" class="nav-link">SWIPE</a></div>
+        <h1>Admin Backfill</h1>
+        <div class="user-menu"><a href="/logout" class="logout-link">LOGUIT</a></div>
+    </header>
+    <main>
+        <div class="admin-card">
+            <p>Start een éénmalige backfill om lege genres in te vullen.</p>
+            <label>Max aantal rijen om bij te werken</label>
+            <input id="limit" type="number" value="100" min="1" />
+            <div style="display:flex; gap:10px;">
+                <button id="startBtn" class="btn-start">Start Backfill</button>
+                <button id="smallBtn" class="btn-start" style="background:#fe8777;">Test 20</button>
+            </div>
+            <div id="status" class="status"></div>
+        </div>
+    </main>
+    <script>
+        document.getElementById('startBtn').addEventListener('click', async () => {
+            const limit = document.getElementById('limit').value || '100';
+            document.getElementById('status').textContent = 'Start backfill...';
+            try {
+                const r = await fetch('/admin/backfill', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'same-origin',
+                    body: JSON.stringify({ limit })
+                });
+                const data = await r.json();
+                if (data.ok) document.getElementById('status').textContent = 'Backfill gestart (pid: ' + data.pid + ')';
+                else document.getElementById('status').textContent = 'Fout: ' + (data.msg || 'unknown');
+            } catch (e) { document.getElementById('status').textContent = 'Fetch error: ' + e.message; }
+        });
+
+        document.getElementById('smallBtn').addEventListener('click', () => { document.getElementById('limit').value = '20'; document.getElementById('startBtn').click(); });
+    </script>
+</body>
+</html>`);
+});
+app.post('/admin/backfill', async (req, res) => {
+    const user = await getActiveUser(req);
+    if (!user || user.username !== 'admin') return res.status(403).json({ ok: false, msg: 'Forbidden' });
+
+    const limit = req.query.limit || (req.body && req.body.limit) || process.env.BACKFILL_LIMIT || '1000';
+    try {
+        // spawn a detached node process to run the backfill script
+        const child = spawn(process.execPath, ['scripts/backfill-genres.js', String(limit)], {
+            detached: true,
+            stdio: 'ignore',
+            env: Object.assign({}, process.env)
+        });
+        child.unref();
+        return res.json({ ok: true, msg: 'Backfill gestart', pid: child.pid });
+    } catch (e) {
+        return res.status(500).json({ ok: false, msg: e.message });
+    }
 });
 
 // --- USER PROFILE ---

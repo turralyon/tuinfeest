@@ -54,4 +54,6 @@ async function backfill(limit = 500) {
     }
 }
 
-backfill(1000);
+const argLimit = process.argv[2] || process.env.BACKFILL_LIMIT || '1000';
+const limit = parseInt(argLimit, 10) || 1000;
+backfill(limit);
