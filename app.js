@@ -26,13 +26,53 @@ const getActiveUser = async (req) => {
     } catch (e) { return null; }
 };
 
-async function getArtistGenres(artistId, token) {
+async function getArtistGenres(artistId, token, artistName = '') {
+    // Try Spotify artist genres first
     try {
         const res = await axios.get(`https://api.spotify.com/v1/artists/${artistId}`, {
             headers: { Authorization: `Bearer ${token}` }
         });
-        return res.data.genres; 
-    } catch (e) { return []; }
+        if (res.data && Array.isArray(res.data.genres) && res.data.genres.length > 0) return res.data.genres;
+    } catch (e) {
+        // continue to fallbacks
+    }
+
+    // Fallback 1: iTunes Search API (no API key required) using artist name
+    if (artistName && artistName.length > 0) {
+        try {
+            const itunes = await axios.get('https://itunes.apple.com/search', {
+                params: { term: artistName, entity: 'musicArtist', limit: 1 }
+            });
+            const results = itunes.data && itunes.data.results;
+            if (Array.isArray(results) && results.length > 0 && results[0].primaryGenreName) {
+                return [results[0].primaryGenreName];
+            }
+        } catch (e) {
+            // ignore and continue
+        }
+    }
+
+    // Fallback 2: MusicBrainz tags (no API key) - return top tag names
+    if (artistName && artistName.length > 0) {
+        try {
+            const mb = await axios.get('https://musicbrainz.org/ws/2/artist/', {
+                params: { query: `artist:${artistName}`, fmt: 'json', limit: 1 },
+                headers: { 'User-Agent': 'tuinfeest/1.0 (example@example.com)' }
+            });
+            const artists = mb.data && mb.data.artists;
+            if (Array.isArray(artists) && artists.length > 0) {
+                const artist = artists[0];
+                if (artist.tags && Array.isArray(artist.tags) && artist.tags.length > 0) {
+                    // return top 3 tags
+                    return artist.tags.sort((a, b) => (b.count || 0) - (a.count || 0)).slice(0, 3).map(t => t.name);
+                }
+            }
+        } catch (e) {
+            // ignore
+        }
+    }
+
+    return [];
 }
 
 // --- API ROUTES ---
@@ -73,7 +113,7 @@ app.get('/api/tracks', async (req, res) => {
         });
 
         for (let track of candidates.slice(0, 15)) {
-            track.temp_genres = await getArtistGenres(track.artists[0].id, token);
+            track.temp_genres = await getArtistGenres(track.artists[0].id, token, track.artists[0].name);
         }
 
         candidates.sort((a, b) => {
@@ -102,7 +142,7 @@ app.post('/api/interact', async (req, res) => {
             
             // Only add if not already in playlist
             if (!existingIds.has(track_id)) {
-                const genres = await getArtistGenres(artist_id, token);
+                const genres = await getArtistGenres(artist_id, token, artist_name);
                 genresStr = genres.join(',');
                 await axios.post(`https://api.spotify.com/v1/playlists/${process.env.SPOTIFY_TARGET_PLAYLIST_ID}/tracks`, { uris: [uri] }, {
                     headers: { Authorization: `Bearer ${token}` }
