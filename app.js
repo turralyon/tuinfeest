@@ -177,12 +177,13 @@ app.get('/leaderboard', async (req, res) => {
     const isLoggedIn = !!user;
     
     try {
+        // Include users with zero votes by left-joining against the users table
         const topLikersRes = await db.query(
-            "SELECT username, COUNT(*) as count FROM history WHERE action = 'like' GROUP BY username ORDER BY count DESC LIMIT 10"
+            "SELECT u.username, COALESCE(l.count, 0) as count FROM users u LEFT JOIN (SELECT username, COUNT(*) as count FROM history WHERE action = 'like' GROUP BY username) l ON u.username = l.username ORDER BY count DESC LIMIT 10"
         );
-        
+
         const topNopersRes = await db.query(
-            "SELECT username, COUNT(*) as count FROM history WHERE action = 'nope' GROUP BY username ORDER BY count DESC LIMIT 10"
+            "SELECT u.username, COALESCE(n.count, 0) as count FROM users u LEFT JOIN (SELECT username, COUNT(*) as count FROM history WHERE action = 'nope' GROUP BY username) n ON u.username = n.username ORDER BY count DESC LIMIT 10"
         );
         
         const topArtistsRes = await db.query(
