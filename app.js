@@ -239,9 +239,10 @@ app.get('/leaderboard', async (req, res) => {
         const genreMap = {};
         topGenresRes.rows.forEach(row => {
             if (row.genres) {
+                const cnt = parseInt(row.count, 10) || 0;
                 row.genres.split(',').forEach(g => {
                     const genre = g.trim();
-                    if (genre) genreMap[genre] = (genreMap[genre] || 0) + row.count;
+                    if (genre) genreMap[genre] = (genreMap[genre] || 0) + cnt;
                 });
             }
         });
