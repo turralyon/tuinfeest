@@ -276,14 +276,53 @@ main {
 @media (max-width: 600px) {
     .login-card {
         max-width: 90vw;
-        padding: 30px 20px;
+        padding: 35px 25px;
+        width: 100%;
     }
     
     .login-header-main {
-        font-size: 2rem;
+        font-size: 2.2rem;
+        margin-bottom: 20px;
+    }
+    
+    .stats-row {
+        display: flex;
+        justify-content: space-around;
+        margin: 25px 0 !important;
+        padding-bottom: 20px !important;
+        border-bottom: 2px solid #eee !important;
     }
     
     .stats-row strong {
-        font-size: 1.8rem;
+        font-size: 2.5rem;
+        display: block;
+        margin-bottom: 8px;
+    }
+    
+    .stats-row small {
+        font-size: 1rem;
+        color: #666;
+    }
+    
+    h3 {
+        font-size: 1.3rem !important;
+        margin-top: 25px !important;
+        margin-bottom: 15px !important;
+    }
+    
+    .btn-start {
+        padding: 15px !important;
+        font-size: 1.1rem;
+        margin-top: 25px !important;
+    }
+    
+    .logout-link {
+        padding: 12px 25px !important;
+        font-size: 1.1rem;
+    }
+    
+    ul li {
+        padding: 12px 0 !important;
+        font-size: 1rem !important;
     }
 }

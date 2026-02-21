@@ -365,6 +365,7 @@ app.get('/profile/:username', async (req, res) => {
 <html lang="nl">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Profiel - ${profileUsername}</title>
     <link rel="stylesheet" href="/style.css">
 </head>
@@ -615,6 +616,7 @@ app.get('/dashboard', async (req, res) => {
 <html lang="nl">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Mijn Stats</title>
     <link rel="stylesheet" href="/style.css">
 </head>
