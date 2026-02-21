@@ -57,7 +57,8 @@ main {
     background: white;
     padding: 40px 30px;
     border-radius: 30px;
-    width: 320px;
+    width: 100%;
+    max-width: 320px;
     text-align: center;
     box-shadow: 0 20px 40px rgba(0,0,0,0.15);
     color: #333;
@@ -269,4 +270,20 @@ main {
 
 @keyframes fadeOut {
     to { opacity: 0; }
+}
+
+/* Mobiele optimalisatie */
+@media (max-width: 600px) {
+    .login-card {
+        max-width: 90vw;
+        padding: 30px 20px;
+    }
+    
+    .login-header-main {
+        font-size: 2rem;
+    }
+    
+    .stats-row strong {
+        font-size: 1.8rem;
+    }
 }
