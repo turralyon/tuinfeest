@@ -258,6 +258,24 @@ app.post('/api/interact', async (req, res) => {
     } catch (e) { res.status(500).send(e.message); }
 });
 
+// provide current playlist progress (ms, max, pct, display)
+app.get('/api/playlist-progress', async (req, res) => {
+    try {
+        const token = await refreshIfNeeded();
+        if (!token) return res.json({ ms: 0, maxMs: 8 * 60 * 60 * 1000, pct: 0, display: '0h 0m / 8h 0m' });
+        const ms = await getPlaylistDurationMs(token);
+        const maxMs = 8 * 60 * 60 * 1000;
+        const pct = Math.min(100, Math.round((ms / maxMs) * 100));
+        const fmt = (ms) => {
+            const s = Math.floor(ms / 1000);
+            const h = Math.floor(s / 3600);
+            const m = Math.floor((s % 3600) / 60);
+            return `${h}h ${m}m`;
+        };
+        return res.json({ ms, maxMs, pct, display: `${fmt(ms)} / ${fmt(maxMs)}` });
+    } catch (e) { return res.status(500).json({ error: e.message }); }
+});
+
 // --- AUTH ---
 
 app.post('/api/login', async (req, res) => {
@@ -693,11 +711,11 @@ app.get('/', async (req, res) => {
             <div style="max-width:420px; margin: 10px auto;">
                 <div style="background:#eee; border-radius:12px; padding:8px; margin-bottom:8px;">
                     <div style="display:flex; justify-content:space-between; font-size:0.9rem; color:#333; margin-bottom:6px;">
-                        <div>Playlist: ${playlistDisplay}</div>
-                        <div>${pct}%</div>
+                        <div id="playlistDisplay">Playlist: ${playlistDisplay}</div>
+                        <div id="playlistPct">${pct}%</div>
                     </div>
                     <div style="background:#ddd; height:12px; border-radius:8px; overflow:hidden;">
-                        <div style="width:${pct}%; height:100%; background:linear-gradient(90deg,#1DB954,#fe8777);"></div>
+                        <div id="playlistBar" style="width:${pct}%; height:100%; background:linear-gradient(90deg,#1DB954,#fe8777);"></div>
                     </div>
                 </div>
             </div>
@@ -826,9 +844,25 @@ app.get('/', async (req, res) => {
                     body: JSON.stringify({ track_id: t.id, action, uri: t.uri, track_name: t.name, artist_name: t.artists[0].name, artist_id: t.artists[0].id })
                 });
                 const data = await resp.json().catch(() => ({}));
-                if (action === 'like' && data && data.added === false) {
-                    // show toast that the track wasn't added due to playlist limit
-                    showToast('Track niet toegevoegd: playlist limiet bereikt (8 uur)');
+                if (action === 'like') {
+                    if (data && data.added === false) {
+                        // show toast that the track wasn't added due to playlist limit
+                        showToast('Track niet toegevoegd: playlist limiet bereikt (8 uur)');
+                    } else {
+                        // successful add -> refresh playlist progress live
+                        try {
+                            const pr = await fetch('/api/playlist-progress');
+                            const pd = await pr.json();
+                            if (pd) {
+                                const bar = document.getElementById('playlistBar');
+                                const pctEl = document.getElementById('playlistPct');
+                                const disp = document.getElementById('playlistDisplay');
+                                if (bar) bar.style.width = (pd.pct || 0) + '%';
+                                if (pctEl) pctEl.textContent = (pd.pct || 0) + '%';
+                                if (disp) disp.textContent = 'Playlist: ' + (pd.display || '');
+                            }
+                        } catch (e) { /* ignore */ }
+                    }
                 }
             } catch (e) {
                 console.error('Interact error', e);
