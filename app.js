@@ -76,6 +76,28 @@ async function getArtistGenres(artistId, token, artistName = '') {
     return [];
 }
 
+async function getPlaylistDurationMs(token) {
+    try {
+        const playlistId = process.env.SPOTIFY_TARGET_PLAYLIST_ID;
+        let total = 0;
+        let offset = 0;
+        const limit = 100;
+        while (true) {
+            const res = await axios.get(`https://api.spotify.com/v1/playlists/${playlistId}/tracks`, {
+                headers: { Authorization: `Bearer ${token}` },
+                params: { fields: 'items(track(duration_ms)),next', limit, offset }
+            });
+            const items = res.data.items || [];
+            items.forEach(it => { if (it.track && it.track.duration_ms) total += it.track.duration_ms; });
+            if (!res.data.next || items.length < limit) break;
+            offset += limit;
+        }
+        return total;
+    } catch (e) {
+        return 0;
+    }
+}
+
 // --- API ROUTES ---
 
 app.get('/api/tracks', async (req, res) => {
@@ -108,22 +130,81 @@ app.get('/api/tracks', async (req, res) => {
 
         let candidates = resp.data.items.map(i => i.track).filter(t => t && t.id && !viewed.has(t.id) && !inPlaylist.has(t.id) && !artistBans.has(t.artists[0].name.toLowerCase()));
 
+        // Build user-specific genre scores (normalize keys)
         const genreScores = {};
         history.filter(h => h.action === 'like' && h.username === user.username).forEach(h => {
-            if (h.genres) h.genres.split(',').forEach(g => { genreScores[g] = (genreScores[g] || 0) + 1; });
+            if (h.genres) h.genres.split(',').forEach(g => {
+                const key = g.toLowerCase().trim();
+                if (!key) return;
+                genreScores[key] = (genreScores[key] || 0) + 1;
+            });
         });
 
-        for (let track of candidates.slice(0, 15)) {
-            track.temp_genres = await getArtistGenres(track.artists[0].id, token, track.artists[0].name);
+        // Build global genre popularity map (aggregate across users)
+        const globalMap = {};
+        try {
+            const topGenresResAll = await db.query("SELECT genres, COUNT(*) as count FROM history WHERE action = 'like' AND genres != '' GROUP BY genres");
+            topGenresResAll.rows.forEach(row => {
+                const cnt = parseInt(row.count, 10) || 0;
+                if (!row.genres) return;
+                row.genres.split(',').forEach(g => {
+                    const key = g.toLowerCase().trim();
+                    if (!key) return;
+                    globalMap[key] = (globalMap[key] || 0) + cnt;
+                });
+            });
+        } catch (e) {
+            // ignore global map errors, continue with empty globalMap
         }
 
-        candidates.sort((a, b) => {
-            const aScore = (a.temp_genres || []).reduce((acc, g) => acc + (genreScores[g] || 0), 0);
-            const bScore = (b.temp_genres || []).reduce((acc, g) => acc + (genreScores[g] || 0), 0);
-            return bScore - aScore;
-        });
+        // Fetch temp genres for candidate tracks (limit calls)
+        for (let track of candidates.slice(0, 15)) {
+            const tg = await getArtistGenres(track.artists[0].id, token, track.artists[0].name);
+            track.temp_genres = (tg || []).map(x => (x || '').toLowerCase().trim()).filter(Boolean);
+        }
 
-        res.json(candidates.slice(0, 10));
+        // Scoring mix: 80% user preference, 20% global popularity
+        const USER_WEIGHT = 0.8;
+        const GLOBAL_WEIGHT = 0.2;
+
+        const scoreForTrack = (track) => {
+            const genres = track.temp_genres || [];
+            return genres.reduce((acc, g) => {
+                const u = genreScores[g] || 0;
+                const gg = globalMap[g] || 0;
+                return acc + (USER_WEIGHT * u) + (GLOBAL_WEIGHT * gg);
+            }, 0);
+        };
+
+        // Compute scores
+        candidates.forEach(c => c._score = scoreForTrack(c));
+
+        // Determine final selection: 80% top personalized, 20% exploration random
+        const finalCount = Math.min(10, candidates.length);
+        const personalizedCount = Math.ceil(finalCount * 0.8);
+        const explorationCount = finalCount - personalizedCount;
+
+        // Sort by score desc
+        const sorted = candidates.slice().sort((a, b) => (b._score || 0) - (a._score || 0));
+        const selected = [];
+        const pickedIds = new Set();
+
+        // pick top personalized
+        for (let i = 0; i < sorted.length && selected.length < personalizedCount; i++) {
+            selected.push(sorted[i]);
+            pickedIds.add(sorted[i].id);
+        }
+
+        // exploration pool: those not picked yet
+        const pool = candidates.filter(c => !pickedIds.has(c.id));
+        // shuffle pool
+        for (let i = pool.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [pool[i], pool[j]] = [pool[j], pool[i]];
+        }
+        for (let i = 0; i < explorationCount && i < pool.length; i++) selected.push(pool[i]);
+
+        res.json(selected.slice(0, finalCount));
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -135,24 +216,45 @@ app.post('/api/interact', async (req, res) => {
         const token = await refreshIfNeeded();
         let genresStr = "";
         if (action === 'like') {
-            // Check if track already exists in target playlist
-            const targetPlaylist = await axios.get(`https://api.spotify.com/v1/playlists/${process.env.SPOTIFY_TARGET_PLAYLIST_ID}/tracks?fields=items(track(id))`, {
+            // Check if track already exists in target playlist (ids)
+            const targetPlaylist = await axios.get(`https://api.spotify.com/v1/playlists/${process.env.SPOTIFY_TARGET_PLAYLIST_ID}/tracks?fields=items(track(id)),total`, {
                 headers: { Authorization: `Bearer ${token}` }
             });
             const existingIds = new Set(targetPlaylist.data.items.map(i => i.track?.id));
-            
+
             // Only add if not already in playlist
             if (!existingIds.has(track_id)) {
                 const genres = await getArtistGenres(artist_id, token, artist_name);
                 genresStr = genres.join(',');
-                await axios.post(`https://api.spotify.com/v1/playlists/${process.env.SPOTIFY_TARGET_PLAYLIST_ID}/tracks`, { uris: [uri] }, {
-                    headers: { Authorization: `Bearer ${token}` }
-                });
+
+                // Check playlist duration limit (8 hours)
+                const currentMs = await getPlaylistDurationMs(token);
+                // fetch the candidate track duration
+                let trackDurMs = 0;
+                try {
+                    const tr = await axios.get(`https://api.spotify.com/v1/tracks/${track_id}`, { headers: { Authorization: `Bearer ${token}` } });
+                    trackDurMs = tr.data && tr.data.duration_ms ? tr.data.duration_ms : 0;
+                } catch (e) { trackDurMs = 0; }
+
+                const MAX_MS = 8 * 60 * 60 * 1000; // 8 hours
+                if ((currentMs + trackDurMs) <= MAX_MS) {
+                    await axios.post(`https://api.spotify.com/v1/playlists/${process.env.SPOTIFY_TARGET_PLAYLIST_ID}/tracks`, { uris: [uri] }, {
+                        headers: { Authorization: `Bearer ${token}` }
+                    });
+                    // mark that it was added
+                    req._addedToPlaylist = true;
+                } else {
+                    // Do not add to playlist when it would exceed 8 hours
+                    req._addedToPlaylist = false;
+                    console.log('Playlist max duration reached - skipping add');
+                }
             }
         }
         await db.query('INSERT INTO history (username, track_id, action, track_name, artist_name, genres) VALUES ($1, $2, $3, $4, $5, $6)', 
             [user.username, track_id, action, track_name, artist_name, genresStr]);
-        res.json({ ok: true });
+        const added = (typeof req._addedToPlaylist === 'boolean') ? req._addedToPlaylist : true;
+        const reason = added ? null : 'max_duration';
+        res.json({ ok: true, added, reason });
     } catch (e) { res.status(500).send(e.message); }
 });
 
@@ -528,6 +630,21 @@ app.get('/profile/:username', async (req, res) => {
 app.get('/', async (req, res) => {
     const user = await getActiveUser(req);
     const showSwipe = !!user;
+    // compute playlist progress (ms) towards 8 hours
+    let playlistMs = 0;
+    try {
+        const token = await refreshIfNeeded();
+        if (token) playlistMs = await getPlaylistDurationMs(token);
+    } catch (e) { playlistMs = 0; }
+    const MAX_MS = 8 * 60 * 60 * 1000;
+    const pct = Math.min(100, Math.round((playlistMs / MAX_MS) * 100));
+    const fmt = (ms) => {
+        const s = Math.floor(ms / 1000);
+        const h = Math.floor(s / 3600);
+        const m = Math.floor((s % 3600) / 60);
+        return `${h}h ${m}m`;
+    };
+    const playlistDisplay = `${fmt(playlistMs)} / ${fmt(MAX_MS)}`;
     res.send(`<!DOCTYPE html>
 <html lang="nl">
 <head>
@@ -573,6 +690,17 @@ app.get('/', async (req, res) => {
                 <a href="#" onclick="toggleReset(false)" class="small-link" style="display:block; margin-top:15px; font-size:0.8rem; color:#666;">Terug naar login</a>
             </div>
         ` : `
+            <div style="max-width:420px; margin: 10px auto;">
+                <div style="background:#eee; border-radius:12px; padding:8px; margin-bottom:8px;">
+                    <div style="display:flex; justify-content:space-between; font-size:0.9rem; color:#333; margin-bottom:6px;">
+                        <div>Playlist: ${playlistDisplay}</div>
+                        <div>${pct}%</div>
+                    </div>
+                    <div style="background:#ddd; height:12px; border-radius:8px; overflow:hidden;">
+                        <div style="width:${pct}%; height:100%; background:linear-gradient(90deg,#1DB954,#fe8777);"></div>
+                    </div>
+                </div>
+            </div>
             <div class="tinder-container" id="tinderContainer"></div>
             <div class="controls">
                 <button class="circle-btn btn-nope" onclick="handleSwipe('nope')">✖</button>
@@ -690,11 +818,21 @@ app.get('/', async (req, res) => {
                 el.style.opacity = '0';
             }
 
-            fetch('/api/interact', { 
-                method: 'POST', 
-                headers: {'Content-Type': 'application/json'}, 
-                body: JSON.stringify({ track_id: t.id, action, uri: t.uri, track_name: t.name, artist_name: t.artists[0].name, artist_id: t.artists[0].id })
-            });
+            try {
+                const resp = await fetch('/api/interact', { 
+                    method: 'POST', 
+                    headers: {'Content-Type': 'application/json'}, 
+                    credentials: 'same-origin',
+                    body: JSON.stringify({ track_id: t.id, action, uri: t.uri, track_name: t.name, artist_name: t.artists[0].name, artist_id: t.artists[0].id })
+                });
+                const data = await resp.json().catch(() => ({}));
+                if (action === 'like' && data && data.added === false) {
+                    // show toast that the track wasn't added due to playlist limit
+                    showToast('Track niet toegevoegd: playlist limiet bereikt (8 uur)');
+                }
+            } catch (e) {
+                console.error('Interact error', e);
+            }
 
             setTimeout(() => { currentIndex++; isAnimating = false; renderCard(); }, 500);
         }
