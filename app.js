@@ -4,7 +4,7 @@ const cookieParser = require('cookie-parser');
 const { v4: uuidv4 } = require('uuid');
 const axios = require('axios');
 const bcrypt = require('bcrypt');
-const db = require('./db');
+const { pool: db, initDb } = require('./db');
 const { refreshIfNeeded } = require('./spotifyService');
 const { spawn } = require('child_process');
 
@@ -15,6 +15,9 @@ const saltRounds = 10;
 app.use(express.json());
 app.use(cookieParser('feestje_geheim_123'));
 app.use(express.static('public'));
+
+// Initialize database before starting server
+initDb();
 
 // --- HELPERS ---
 
@@ -308,6 +311,253 @@ app.post('/api/reset-password', async (req, res) => {
     } catch (e) { res.status(500).json({ ok: false, msg: "Server fout" }); }
 });
 
+app.post('/api/register', async (req, res) => {
+    const { username, password, code } = req.body;
+    
+    // Validatie uitnodigingscode
+    if (!code) {
+        return res.json({ ok: false, msg: "Uitnodigingscode vereist" });
+    }
+    
+    // Check of de uitnodigingscode bestaat en nog niet gebruikt is
+    try {
+        const inviteRes = await db.query('SELECT * FROM invitations WHERE code = $1 AND used = FALSE', [code]);
+        if (inviteRes.rows.length === 0) {
+            return res.json({ ok: false, msg: "Ongeldige of verlopen uitnodigingscode" });
+        }
+        
+        const invite = inviteRes.rows[0];
+        
+        // Controleer dat de username overeenkomt met de uitnodiging
+        if (username !== invite.username) {
+            return res.json({ ok: false, msg: "Gebruikersnaam komt niet overeen met uitnodiging" });
+        }
+        
+        // Check of gebruiker al bestaat
+        const existing = await db.query('SELECT * FROM users WHERE username = $1', [username]);
+        if (existing.rows.length > 0) {
+            return res.json({ ok: false, msg: "Gebruiker bestaat al" });
+        }
+        
+        // Validatie wachtwoord
+        if (!password || password.length < 6) {
+            return res.json({ ok: false, msg: "Wachtwoord moet minimaal 6 tekens zijn" });
+        }
+        
+        // Nieuwe gebruiker aanmaken
+        const hashedPass = await bcrypt.hash(password, saltRounds);
+        const token = uuidv4();
+        await db.query('INSERT INTO users (username, password, token) VALUES ($1, $2, $3)', [username, hashedPass, token]);
+        
+        // Markeer uitnodiging als gebruikt
+        await db.query('UPDATE invitations SET used = TRUE WHERE code = $1', [code]);
+        
+        // Direct inloggen
+        res.cookie('user_auth', token, { signed: true, httpOnly: true, maxAge: 30 * 24 * 60 * 60 * 1000 });
+        res.json({ ok: true });
+    } catch (e) {
+        console.error('Register error:', e);
+        res.status(500).json({ ok: false, msg: "Server fout" });
+    }
+});
+
+// --- ADMIN: Uitnodigingen beheren ---
+
+app.post('/api/admin/create-invite', async (req, res) => {
+    const user = await getActiveUser(req);
+    if (!user || user.username !== 'admin') {
+        return res.status(403).json({ ok: false, msg: "Alleen admin kan uitnodigingen aanmaken" });
+    }
+    
+    const { username } = req.body;
+    
+    if (!username || username.length < 3) {
+        return res.json({ ok: false, msg: "Gebruikersnaam moet minimaal 3 tekens zijn" });
+    }
+    
+    try {
+        // Check of gebruiker al bestaat
+        const existingUser = await db.query('SELECT * FROM users WHERE username = $1', [username]);
+        if (existingUser.rows.length > 0) {
+            return res.json({ ok: false, msg: "Gebruiker bestaat al" });
+        }
+        
+        // Check of er al een uitnodiging is voor deze gebruiker
+        const existingInvite = await db.query('SELECT * FROM invitations WHERE username = $1', [username]);
+        if (existingInvite.rows.length > 0) {
+            const code = existingInvite.rows[0].code;
+            const used = existingInvite.rows[0].used;
+            return res.json({ ok: true, code, used, msg: "Uitnodiging bestaat al" });
+        }
+        
+        // Genereer unieke code
+        const code = 'TUIN' + Math.random().toString(36).substring(2, 8).toUpperCase();
+        
+        await db.query('INSERT INTO invitations (code, username) VALUES ($1, $2)', [code, username]);
+        
+        res.json({ ok: true, code, used: false });
+    } catch (e) {
+        console.error('Create invite error:', e);
+        res.status(500).json({ ok: false, msg: "Server fout" });
+    }
+});
+
+app.get('/api/admin/invites', async (req, res) => {
+    const user = await getActiveUser(req);
+    if (!user || user.username !== 'admin') {
+        return res.status(403).json({ ok: false, msg: "Alleen admin kan uitnodigingen bekijken" });
+    }
+    
+    try {
+        const result = await db.query('SELECT * FROM invitations ORDER BY created_at DESC');
+        res.json({ ok: true, invites: result.rows });
+    } catch (e) {
+        res.status(500).json({ ok: false, msg: "Server fout" });
+    }
+});
+
+app.get('/admin/invites', async (req, res) => {
+    const user = await getActiveUser(req);
+    if (!user || user.username !== 'admin') {
+        return res.status(403).send('Forbidden');
+    }
+    
+    const baseUrl = process.env.ACTIVATION_URL || `http://localhost:${port}`;
+    
+    res.send(`<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Uitnodigingen Beheren</title>
+    <link rel="stylesheet" href="/style.css">
+    <style>
+        .admin-container { max-width: 800px; margin: 0 auto; padding: 20px; }
+        .invite-form { display: flex; gap: 10px; margin-bottom: 20px; }
+        .invite-form input { flex: 1; padding: 12px; border-radius: 8px; border: 2px solid #1DB954; font-size: 1rem; }
+        .invite-form button { padding: 12px 24px; background: #1DB954; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; }
+        .invite-list { list-style: none; padding: 0; }
+        .invite-item { background: white; padding: 15px; margin-bottom: 10px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        .invite-item.used { opacity: 0.6; background: #f5f5f5; }
+        .invite-header { display: flex; justify-content: space-between; align-items: center; }
+        .invite-link { background: #f0f0f0; padding: 8px 12px; border-radius: 4px; font-family: monospace; font-size: 0.85rem; word-break: break-all; }
+        .copy-btn { background: #fe8777; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 0.75rem; margin-left: 8px; }
+        .status-badge { padding: 4px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: bold; }
+        .status-used { background: #ddd; color: #666; }
+        .status-active { background: #1DB954; color: white; }
+        .back-link { display: inline-block; margin-bottom: 20px; color: #1DB954; text-decoration: none; }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="user-menu"><a href="/" class="nav-link">SWIPE</a></div>
+        <h1>📩 Uitnodigingen Beheren</h1>
+        <div class="user-menu"><a href="/logout" class="logout-link">LOGUIT</a></div>
+    </header>
+    <main>
+        <div class="admin-container">
+            <a href="/" class="back-link">← Terug naar Swipe</a>
+            
+            <div class="login-card">
+                <h3>Nieuwe uitnodiging aanmaken</h3>
+                <div class="invite-form">
+                    <input type="text" id="usernameInput" placeholder="Gebruikersnaam voor gast">
+                    <button onclick="createInvite()">Aanmaken</button>
+                </div>
+                <div id="newInviteResult" style="margin-top: 15px; display: none;">
+                    <p style="color: #1DB954; font-weight: bold;">✅ Uitnodiging aangemaakt!</p>
+                    <p>Deel deze link met de gast:</p>
+                    <div class="invite-link" id="newInviteLink"></div>
+                    <button class="copy-btn" onclick="copyNewLink()">Kopiëren</button>
+                </div>
+            </div>
+            
+            <h3 style="margin-top: 30px; color: #1DB954;">Alle uitnodigingen</h3>
+            <ul class="invite-list" id="inviteList">
+                <li style="text-align: center; padding: 20px; color: #888;">Laden...</li>
+            </ul>
+        </div>
+    </main>
+    
+    <script>
+        const baseUrl = '${baseUrl}';
+        let latestLink = '';
+        
+        async function createInvite() {
+            const username = document.getElementById('usernameInput').value.trim();
+            if (!username) {
+                alert('Voer een gebruikersnaam in');
+                return;
+            }
+            
+            try {
+                const r = await fetch('/api/admin/create-invite', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'same-origin',
+                    body: JSON.stringify({ username })
+                });
+                const d = await r.json();
+                
+                if (d.ok) {
+                    const link = baseUrl + '/?user=' + encodeURIComponent(username) + '&code=' + encodeURIComponent(d.code);
+                    latestLink = link;
+                    document.getElementById('newInviteResult').style.display = 'block';
+                    document.getElementById('newInviteLink').textContent = link;
+                    document.getElementById('usernameInput').value = '';
+                    loadInvites();
+                } else {
+                    alert(d.msg || 'Fout bij aanmaken');
+                }
+            } catch (e) {
+                alert('Fout: ' + e.message);
+            }
+        }
+        
+        function copyNewLink() {
+            navigator.clipboard.writeText(latestLink).then(() => {
+                alert('Link gekopieerd!');
+            });
+        }
+        
+        async function loadInvites() {
+            try {
+                const r = await fetch('/api/admin/invites', { credentials: 'same-origin' });
+                const d = await r.json();
+                
+                if (d.ok && d.invites) {
+                    const list = document.getElementById('inviteList');
+                    if (d.invites.length === 0) {
+                        list.innerHTML = '<li style="text-align: center; padding: 20px; color: #888;">Nog geen uitnodigingen</li>';
+                        return;
+                    }
+                    
+                    list.innerHTML = d.invites.map(inv => {
+                        const link = baseUrl + '/?user=' + encodeURIComponent(inv.username) + '&code=' + encodeURIComponent(inv.code);
+                        return \`<li class="invite-item \${inv.used ? 'used' : ''}">
+                            <div class="invite-header">
+                                <strong>\${inv.username}</strong>
+                                <span class="status-badge \${inv.used ? 'status-used' : 'status-active'}">\${inv.used ? 'GEBRUIKT' : 'ACTIEF'}</span>
+                            </div>
+                            <div style="margin-top: 10px;">
+                                <span class="invite-link">\${link}</span>
+                                <button class="copy-btn" onclick="navigator.clipboard.writeText('\${link.replace(/'/g, "\\'")}').then(() => alert('Gekopieerd!'))">Kopiëren</button>
+                            </div>
+                            <small style="color: #888; display: block; margin-top: 8px;">Aangemaakt: \${new Date(inv.created_at).toLocaleDateString('nl-NL')}</small>
+                        </li>\`;
+                    }).join('');
+                }
+            } catch (e) {
+                console.error('Error loading invites:', e);
+            }
+        }
+        
+        loadInvites();
+    </script>
+</body>
+</html>`);
+});
+
 app.get('/logout', (req, res) => { res.clearCookie('user_auth'); res.redirect('/'); });
 
 // --- LEADERBOARD ---
@@ -398,7 +648,7 @@ app.get('/leaderboard', async (req, res) => {
     <header>
         <div class="user-menu">${isLoggedIn ? '<a href="/" class="nav-link">SWIPE</a>' : ''}</div>
         <h1>🏆 Leaderboard</h1>
-        <div class="user-menu">${isLoggedIn ? '<a href="/logout" class="logout-link">LOGUIT</a>' : '<a href="/" class="nav-link">LOGIN</a>'}</div>
+        <div class="user-menu">${isLoggedIn && user.username === 'admin' ? '<a href="/admin/invites" class="nav-link" style="margin-right:10px;">📩</a>' : ''}${isLoggedIn ? '<a href="/logout" class="logout-link">LOGUIT</a>' : '<a href="/" class="nav-link">LOGIN</a>'}</div>
     </header>
     <main>
         <div class="login-card" style="max-height: 90vh; overflow-y: auto;">
@@ -690,7 +940,19 @@ app.get('/', async (req, res) => {
                     <span class="toggle-password" onclick="togglePasswordVisibility('passInput')">👁️</span>
                 </div>
                 <button onclick="login()" class="btn-start">START</button>
-                <a href="#" onclick="toggleReset(true)" class="small-link" style="display:block; margin-top:15px; font-size:0.8rem; color:#666;">Wachtwoord veranderen?</a>
+                <a href="#" onclick="toggleForm('register')" class="small-link" style="display:block; margin-top:15px; font-size:0.8rem; color:#666;">Nog geen account? Registreer</a>
+                <a href="#" onclick="toggleReset(true)" class="small-link" style="display:block; margin-top:10px; font-size:0.8rem; color:#666;">Wachtwoord vergeten?</a>
+            </div>
+            <div id="registerForm" class="login-card" style="display:none;">
+                <h2 class="login-header-main">Nieuw bij</h2>
+                <h1 class="login-header-sub">Tuinfeest</h1>
+                <input type="text" id="regUser" placeholder="Naam" readonly style="background:#e0e0e0;">
+                <div class="password-wrapper">
+                    <input type="password" id="regPass" placeholder="Wachtwoord">
+                    <span class="toggle-password" onclick="togglePasswordVisibility('regPass')">👁️</span>
+                </div>
+                <button onclick="register()" class="btn-start">REGISTREER</button>
+                <a href="#" onclick="toggleForm('login')" class="small-link" style="display:block; margin-top:15px; font-size:0.8rem; color:#666;">Al een account? Login</a>
             </div>
             <div id="resetForm" class="login-card" style="display:none;">
                 <h2 class="login-header-main">Wachtwoord</h2>
@@ -705,7 +967,7 @@ app.get('/', async (req, res) => {
                     <span class="toggle-password" onclick="togglePasswordVisibility('newPass')">👁️</span>
                 </div>
                 <button onclick="resetPassword()" class="btn-start">UPDATE</button>
-                <a href="#" onclick="toggleReset(false)" class="small-link" style="display:block; margin-top:15px; font-size:0.8rem; color:#666;">Terug naar login</a>
+                <a href="#" onclick="toggleForm('login')" class="small-link" style="display:block; margin-top:15px; font-size:0.8rem; color:#666;">Terug naar login</a>
             </div>
         ` : `
             <div style="max-width:420px; margin: 10px auto;">
@@ -728,13 +990,39 @@ app.get('/', async (req, res) => {
         `}
     </main>
     <script>
+        // Check URL parameters bij laden voor registratie link
+        const urlParams = new URLSearchParams(window.location.search);
+        const urlUsername = urlParams.get('user');
+        const urlCode = urlParams.get('code');
+        
+        if (urlUsername && urlCode) {
+            document.getElementById('regUser').value = urlUsername;
+            // Store code in hidden field
+            let codeInput = document.getElementById('regCode');
+            if (!codeInput) {
+                codeInput = document.createElement('input');
+                codeInput.type = 'hidden';
+                codeInput.id = 'regCode';
+                document.getElementById('registerForm').appendChild(codeInput);
+            }
+            codeInput.value = urlCode;
+            toggleForm('register');
+        }
+        
         function togglePasswordVisibility(id) {
             const input = document.getElementById(id);
             input.type = input.type === "password" ? "text" : "password";
         }
+        function toggleForm(formName) {
+            document.getElementById('loginForm').style.display = 'none';
+            document.getElementById('registerForm').style.display = 'none';
+            document.getElementById('resetForm').style.display = 'none';
+            if (formName === 'login') document.getElementById('loginForm').style.display = 'block';
+            else if (formName === 'register') document.getElementById('registerForm').style.display = 'block';
+            else if (formName === 'reset') document.getElementById('resetForm').style.display = 'block';
+        }
         function toggleReset(show) {
-            document.getElementById('loginForm').style.display = show ? 'none' : 'block';
-            document.getElementById('resetForm').style.display = show ? 'block' : 'none';
+            toggleForm(show ? 'reset' : 'login');
         }
         function showToast(msg) {
             const container = document.getElementById('toastContainer');
@@ -746,6 +1034,29 @@ app.get('/', async (req, res) => {
             const password = document.getElementById('passInput').value;
             const r = await fetch('/api/login', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ username, password }) });
             const d = await r.json(); if (d.ok) location.reload(); else alert("Foutje!");
+        }
+        async function register() {
+            const username = document.getElementById('regUser').value.trim();
+            const password = document.getElementById('regPass').value;
+            const code = document.getElementById('regCode') ? document.getElementById('regCode').value : '';
+            
+            if (!username) {
+                alert("Gebruikersnaam is vereist");
+                return;
+            }
+            if (!password) {
+                alert("Wachtwoord is vereist");
+                return;
+            }
+            if (!code) {
+                alert("Uitnodigingscode ontbreekt");
+                return;
+            }
+            
+            const r = await fetch('/api/register', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ username, password, code }) });
+            const d = await r.json();
+            if (d.ok) location.reload();
+            else alert(d.msg || "Registratie mislukt");
         }
         async function resetPassword() {
             const username = document.getElementById('resetUser').value;

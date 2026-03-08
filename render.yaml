@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: tuinfeest-swipe
+    env: node
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+      - key: DATABASE_URL
+        sync: false
+      - key: SPOTIFY_CLIENT_ID
+        sync: false
+      - key: SPOTIFY_CLIENT_SECRET
+        sync: false
+      - key: SPOTIFY_REFRESH_TOKEN
+        sync: false
+      - key: SPOTIFY_SOURCE_PLAYLIST_ID
+        sync: false
+      - key: SPOTIFY_TARGET_PLAYLIST_ID
+        sync: false
+      - key: ACTIVATION_URL
+        sync: false
+      - key: EMAIL_USER
+        sync: false
+      - key: EMAIL_PASS
+        sync: false

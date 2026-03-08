@@ -33,30 +33,33 @@ const initDb = async () => {
         action TEXT,
         track_name TEXT,
         artist_name TEXT,
+        genres TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )`);
+
+    // Voeg genres kolom toe als deze nog niet bestaat (voor bestaande databases)
+    await client.query(`
+      ALTER TABLE history ADD COLUMN IF NOT EXISTS genres TEXT
+    `);
+
+    // Uitnodigingen tabel aanmaken
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS invitations (
+        id SERIAL PRIMARY KEY,
+        code TEXT UNIQUE NOT NULL,
+        username TEXT UNIQUE NOT NULL,
+        used BOOLEAN DEFAULT FALSE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
 
     // Gebruikers toevoegen als ze er nog niet zijn
     const res = await client.query('SELECT COUNT(*) FROM users');
     if (parseInt(res.rows[0].count) === 0) {
-      const defaultUsers = [
-        ['admin', 'Spelletjes2026!'],
-        ['Ans', 'F33stjeAns'],
-        ['Theo', 'Th3oFeEstJ#'],
-        ['Gonnie', 'g0NnieF3est'],
-        ['Antoon', 'F33sT18Jul!'],
-        ['Linda', 'L!nD@F3est'],
-        ['Carolien', 'G3woontHu!s'],
-        ['Rene', 'ByP@sca!&Car0l1eN'],
-        ['Vincent', 'S!tt@Rd6137KH'],
-        ['Elke', 'Bi3sB0scHsTr@@t8']
-      ];
-
-      for (const [user, pass] of defaultUsers) {
-        const hashedPass = await bcrypt.hash(pass, 10);
-        await client.query('INSERT INTO users (username, password) VALUES ($1, $2) ON CONFLICT DO NOTHING', [user, hashedPass]);
-      }
-      console.log("✅ Gastenlijst succesvol geïmporteerd naar Neon!");
+      // Alleen admin gebruiker aanmaken
+      const hashedPass = await bcrypt.hash('Spelletjes2026!', 10);
+      await client.query('INSERT INTO users (username, password) VALUES ($1, $2)', ['admin', hashedPass]);
+      console.log("✅ Admin gebruiker aangemaakt!");
     } else {
       // Upgrade plaintext passwords to bcrypt hashes
       const plainUsers = await client.query('SELECT id, password FROM users WHERE password NOT LIKE $1', ['$2%']);
@@ -75,6 +78,4 @@ const initDb = async () => {
   }
 };
 
-initDb();
-
-module.exports = pool;
+module.exports = { pool, initDb };
