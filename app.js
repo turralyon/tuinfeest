@@ -416,6 +416,22 @@ app.get('/api/admin/invites', async (req, res) => {
     }
 });
 
+app.delete('/api/admin/invites/:id', async (req, res) => {
+    const user = await getActiveUser(req);
+    if (!user || user.username !== 'admin') {
+        return res.status(403).json({ ok: false, msg: "Alleen admin kan uitnodigingen verwijderen" });
+    }
+    
+    const { id } = req.params;
+    
+    try {
+        await db.query('DELETE FROM invitations WHERE id = $1', [id]);
+        res.json({ ok: true, msg: "Uitnodiging verwijderd" });
+    } catch (e) {
+        res.status(500).json({ ok: false, msg: "Server fout" });
+    }
+});
+
 app.get('/admin/invites', async (req, res) => {
     const user = await getActiveUser(req);
     if (!user || user.username !== 'admin') {
@@ -446,6 +462,8 @@ app.get('/admin/invites', async (req, res) => {
         .status-used { background: #ddd; color: #666; }
         .status-active { background: #1DB954; color: white; }
         .back-link { display: inline-block; margin-bottom: 20px; color: #1DB954; text-decoration: none; }
+        .delete-btn { background: #ff4444; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 0.75rem; margin-left: 8px; }
+        .delete-btn:hover { background: #cc0000; }
     </style>
 </head>
 <body>
@@ -524,14 +542,14 @@ app.get('/admin/invites', async (req, res) => {
             try {
                 const r = await fetch('/api/admin/invites', { credentials: 'same-origin' });
                 const d = await r.json();
-                
+
                 if (d.ok && d.invites) {
                     const list = document.getElementById('inviteList');
                     if (d.invites.length === 0) {
                         list.innerHTML = '<li style="text-align: center; padding: 20px; color: #888;">Nog geen uitnodigingen</li>';
                         return;
                     }
-                    
+
                     list.innerHTML = d.invites.map(inv => {
                         const link = baseUrl + '/?user=' + encodeURIComponent(inv.username) + '&code=' + encodeURIComponent(inv.code);
                         return \`<li class="invite-item \${inv.used ? 'used' : ''}">
@@ -539,9 +557,10 @@ app.get('/admin/invites', async (req, res) => {
                                 <strong>\${inv.username}</strong>
                                 <span class="status-badge \${inv.used ? 'status-used' : 'status-active'}">\${inv.used ? 'GEBRUIKT' : 'ACTIEF'}</span>
                             </div>
-                            <div style="margin-top: 10px;">
-                                <span class="invite-link">\${link}</span>
+                            <div style="margin-top: 10px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                                <span class="invite-link" style="flex: 1;">\${link}</span>
                                 <button class="copy-btn" onclick="navigator.clipboard.writeText('\${link.replace(/'/g, "\\'")}').then(() => alert('Gekopieerd!'))">Kopiëren</button>
+                                \${!inv.used ? \`<button class="delete-btn" onclick="deleteInvite(\${inv.id}, '\${inv.username.replace(/'/g, "\\'")}')">Verwijderen</button>\` : ''}
                             </div>
                             <small style="color: #888; display: block; margin-top: 8px;">Aangemaakt: \${new Date(inv.created_at).toLocaleDateString('nl-NL')}</small>
                         </li>\`;
@@ -549,6 +568,29 @@ app.get('/admin/invites', async (req, res) => {
                 }
             } catch (e) {
                 console.error('Error loading invites:', e);
+            }
+        }
+
+        async function deleteInvite(id, username) {
+            if (!confirm(\`Weet je zeker dat je de uitnodiging voor '\${username}' wilt verwijderen?\`)) {
+                return;
+            }
+
+            try {
+                const r = await fetch('/api/admin/invites/' + id, {
+                    method: 'DELETE',
+                    credentials: 'same-origin'
+                });
+                const d = await r.json();
+
+                if (d.ok) {
+                    alert('Uitnodiging verwijderd');
+                    loadInvites();
+                } else {
+                    alert(d.msg || 'Fout bij verwijderen');
+                }
+            } catch (e) {
+                alert('Fout: ' + e.message);
             }
         }
         
@@ -588,13 +630,13 @@ app.get('/leaderboard', async (req, res) => {
     const isLoggedIn = !!user;
     
     try {
-        // Include users with zero votes by left-joining against the users table
+        // Include users with zero votes by left-joining against the users table (excl. admin)
         const topLikersRes = await db.query(
-            "SELECT u.username, COALESCE(l.count, 0) as count FROM users u LEFT JOIN (SELECT username, COUNT(*) as count FROM history WHERE action = 'like' GROUP BY username) l ON u.username = l.username ORDER BY count DESC LIMIT 10"
+            "SELECT u.username, COALESCE(l.count, 0) as count FROM users u LEFT JOIN (SELECT username, COUNT(*) as count FROM history WHERE action = 'like' GROUP BY username) l ON u.username = l.username WHERE u.username != 'admin' ORDER BY count DESC LIMIT 10"
         );
 
         const topNopersRes = await db.query(
-            "SELECT u.username, COALESCE(n.count, 0) as count FROM users u LEFT JOIN (SELECT username, COUNT(*) as count FROM history WHERE action = 'nope' GROUP BY username) n ON u.username = n.username ORDER BY count DESC LIMIT 10"
+            "SELECT u.username, COALESCE(n.count, 0) as count FROM users u LEFT JOIN (SELECT username, COUNT(*) as count FROM history WHERE action = 'nope' GROUP BY username) n ON u.username = n.username WHERE u.username != 'admin' ORDER BY count DESC LIMIT 10"
         );
         
         const topArtistsRes = await db.query(
