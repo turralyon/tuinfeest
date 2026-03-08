@@ -230,30 +230,15 @@ app.post('/api/interact', async (req, res) => {
                 const genres = await getArtistGenres(artist_id, token, artist_name);
                 genresStr = genres.join(',');
 
-                // Check playlist duration limit (8 hours)
-                const currentMs = await getPlaylistDurationMs(token);
-                // fetch the candidate track duration
-                let trackDurMs = 0;
-                try {
-                    const tr = await axios.get(`https://api.spotify.com/v1/tracks/${track_id}`, { headers: { Authorization: `Bearer ${token}` } });
-                    trackDurMs = tr.data && tr.data.duration_ms ? tr.data.duration_ms : 0;
-                } catch (e) { trackDurMs = 0; }
-
-                const MAX_MS = 8 * 60 * 60 * 1000; // 8 hours
-                if ((currentMs + trackDurMs) <= MAX_MS) {
-                    await axios.post(`https://api.spotify.com/v1/playlists/${process.env.SPOTIFY_TARGET_PLAYLIST_ID}/tracks`, { uris: [uri] }, {
-                        headers: { Authorization: `Bearer ${token}` }
-                    });
-                    // mark that it was added
-                    req._addedToPlaylist = true;
-                } else {
-                    // Do not add to playlist when it would exceed 8 hours
-                    req._addedToPlaylist = false;
-                    console.log('Playlist max duration reached - skipping add');
-                }
+                // Add track to playlist (no duration limit)
+                await axios.post(`https://api.spotify.com/v1/playlists/${process.env.SPOTIFY_TARGET_PLAYLIST_ID}/tracks`, { uris: [uri] }, {
+                    headers: { Authorization: `Bearer ${token}` }
+                });
+                // mark that it was added
+                req._addedToPlaylist = true;
             }
         }
-        await db.query('INSERT INTO history (username, track_id, action, track_name, artist_name, genres) VALUES ($1, $2, $3, $4, $5, $6)', 
+        await db.query('INSERT INTO history (username, track_id, action, track_name, artist_name, genres) VALUES ($1, $2, $3, $4, $5, $6)',
             [user.username, track_id, action, track_name, artist_name, genresStr]);
         const added = (typeof req._addedToPlaylist === 'boolean') ? req._addedToPlaylist : true;
         const reason = added ? null : 'max_duration';
@@ -261,21 +246,29 @@ app.post('/api/interact', async (req, res) => {
     } catch (e) { res.status(500).send(e.message); }
 });
 
-// provide current playlist progress (ms, max, pct, display)
+// provide current playlist progress (ms, total tracks, display)
 app.get('/api/playlist-progress', async (req, res) => {
     try {
         const token = await refreshIfNeeded();
-        if (!token) return res.json({ ms: 0, maxMs: 8 * 60 * 60 * 1000, pct: 0, display: '0h 0m / 8h 0m' });
+        if (!token) return res.json({ ms: 0, totalTracks: 0, display: '0h 0m' });
         const ms = await getPlaylistDurationMs(token);
-        const maxMs = 8 * 60 * 60 * 1000;
-        const pct = Math.min(100, Math.round((ms / maxMs) * 100));
+        
+        // Get total tracks count
+        let totalTracks = 0;
+        try {
+            const playlistRes = await axios.get(`https://api.spotify.com/v1/playlists/${process.env.SPOTIFY_TARGET_PLAYLIST_ID}`, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            totalTracks = playlistRes.data.tracks.total;
+        } catch (e) { /* ignore */ }
+        
         const fmt = (ms) => {
             const s = Math.floor(ms / 1000);
             const h = Math.floor(s / 3600);
             const m = Math.floor((s % 3600) / 60);
             return `${h}h ${m}m`;
         };
-        return res.json({ ms, maxMs, pct, display: `${fmt(ms)} / ${fmt(maxMs)}` });
+        return res.json({ ms, totalTracks, display: `${fmt(ms)} (${totalTracks} tracks)` });
     } catch (e) { return res.status(500).json({ error: e.message }); }
 });
 
@@ -940,21 +933,30 @@ app.get('/profile/:username', async (req, res) => {
 app.get('/', async (req, res) => {
     const user = await getActiveUser(req);
     const showSwipe = !!user;
-    // compute playlist progress (ms) towards 8 hours
+    // compute playlist progress
     let playlistMs = 0;
+    let totalTracks = 0;
     try {
         const token = await refreshIfNeeded();
-        if (token) playlistMs = await getPlaylistDurationMs(token);
+        if (token) {
+            playlistMs = await getPlaylistDurationMs(token);
+            // Get total tracks count
+            try {
+                const playlistRes = await axios.get(`https://api.spotify.com/v1/playlists/${process.env.SPOTIFY_TARGET_PLAYLIST_ID}`, {
+                    headers: { Authorization: `Bearer ${token}` }
+                });
+                totalTracks = playlistRes.data.tracks.total;
+            } catch (e) { /* ignore */ }
+        }
     } catch (e) { playlistMs = 0; }
-    const MAX_MS = 8 * 60 * 60 * 1000;
-    const pct = Math.min(100, Math.round((playlistMs / MAX_MS) * 100));
+    
     const fmt = (ms) => {
         const s = Math.floor(ms / 1000);
         const h = Math.floor(s / 3600);
         const m = Math.floor((s % 3600) / 60);
         return `${h}h ${m}m`;
     };
-    const playlistDisplay = `${fmt(playlistMs)} / ${fmt(MAX_MS)}`;
+    const playlistDisplay = `${fmt(playlistMs)} (${totalTracks} tracks)`;
     res.send(`<!DOCTYPE html>
 <html lang="nl">
 <head>
@@ -1014,12 +1016,8 @@ app.get('/', async (req, res) => {
         ` : `
             <div style="max-width:420px; margin: 10px auto;">
                 <div style="background:#eee; border-radius:12px; padding:8px; margin-bottom:8px;">
-                    <div style="display:flex; justify-content:space-between; font-size:0.9rem; color:#333; margin-bottom:6px;">
+                    <div style="display:flex; justify-content:space-between; font-size:0.9rem; color:#333;">
                         <div id="playlistDisplay">Playlist: ${playlistDisplay}</div>
-                        <div id="playlistPct">${pct}%</div>
-                    </div>
-                    <div style="background:#ddd; height:12px; border-radius:8px; overflow:hidden;">
-                        <div id="playlistBar" style="width:${pct}%; height:100%; background:linear-gradient(90deg,#1DB954,#fe8777);"></div>
                     </div>
                 </div>
             </div>
@@ -1198,24 +1196,15 @@ app.get('/', async (req, res) => {
                 });
                 const data = await resp.json().catch(() => ({}));
                 if (action === 'like') {
-                    if (data && data.added === false) {
-                        // show toast that the track wasn't added due to playlist limit
-                        showToast('Track niet toegevoegd: playlist limiet bereikt (8 uur)');
-                    } else {
-                        // successful add -> refresh playlist progress live
-                        try {
-                            const pr = await fetch('/api/playlist-progress');
-                            const pd = await pr.json();
-                            if (pd) {
-                                const bar = document.getElementById('playlistBar');
-                                const pctEl = document.getElementById('playlistPct');
-                                const disp = document.getElementById('playlistDisplay');
-                                if (bar) bar.style.width = (pd.pct || 0) + '%';
-                                if (pctEl) pctEl.textContent = (pd.pct || 0) + '%';
-                                if (disp) disp.textContent = 'Playlist: ' + (pd.display || '');
-                            }
-                        } catch (e) { /* ignore */ }
-                    }
+                    // successful add -> refresh playlist progress live
+                    try {
+                        const pr = await fetch('/api/playlist-progress');
+                        const pd = await pr.json();
+                        if (pd) {
+                            const disp = document.getElementById('playlistDisplay');
+                            if (disp) disp.textContent = 'Playlist: ' + (pd.display || '');
+                        }
+                    } catch (e) { /* ignore */ }
                 }
             } catch (e) {
                 console.error('Interact error', e);
